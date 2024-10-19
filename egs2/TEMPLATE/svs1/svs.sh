@@ -1232,8 +1232,9 @@ if ! "${skip_packing}"; then
         fi
         if "${use_spk_embed}"; then
             for dset in "${train_set}" ${test_sets}; do
-                _opts+=" --option ${dumpdir}/${spk_embed_tag}/${dset}/spk_${spk_embed_tag}.scp"
-                _opts+=" --option ${dumpdir}/${spk_embed_tag}/${dset}/spk_${spk_embed_tag}.ark"
+                _spk_embed_dir="${dumpdir}/${spk_embed_tag}/${dset}"
+                _opts+=" --option ${_spk_embed_dir}/${spk_embed_tag}.scp"
+                _opts+=" --option ${_spk_embed_dir}/${spk_embed_tag}.ark"
             done
         fi
         if "${use_sid}"; then
