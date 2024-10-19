@@ -27,7 +27,7 @@ def get_parser():
     parser.add_argument(
         "--toolkit",
         type=str,
-        help="Toolkit for Extracting speaker speaker embeddingss.",
+        help="Toolkit for Extracting speaker speaker embeddings.",
         choices=["espnet", "speechbrain", "rawnet"],
     )
     parser.add_argument(
@@ -45,6 +45,11 @@ def get_parser():
         "out_folder",
         type=Path,
         help="Output folder to save the speaker embeddings.",
+    )
+    parser.add_argument(
+        "--max_utts_to_avg",
+        type=int,
+        help="Maximum number of utterances to extract embeddings and average them. If not provided, all utterances will be used.",
     )
     return parser
 
@@ -213,7 +218,9 @@ def main(argv):
 
         for speaker in tqdm(spk2utt):
             spk_embeddings = list()
-            for utt in spk2utt[speaker]:
+            for i, utt in enumerate(spk2utt[speaker]):
+                if args.max_utts_to_avg and i >= args.max_utts_to_avg:
+                    break
                 in_sr, wav = wav_scp[utt]
                 # Speaker Embedding
                 embeds = spk_embed_extractor(wav, in_sr)
