@@ -75,6 +75,7 @@ spk_embed_tag=espnet_spk                   # The additional tag of speaker embed
 spk_embed_gpu_inference=false              # Whether to use gpu to inference speaker embedding.
 spk_embed_tool=espnet                      # Toolkit for extracting x-vector (speechbrain, rawnet, espnet, kaldi).
 spk_embed_model=espnet/voxcelebs12_rawnet3 # For only espnet, speechbrain, or rawnet.
+average_spk_embed_utt_num=100              # The number of utterances to average speaker embeddings. "" means all utterances. 0 means no average. Currently only support espnet spk. X-vector is either no average or all utterances average.
 
 oov="<unk>"         # Out of vocabrary symbol.
 blank="<blank>"     # CTC blank symbol.
@@ -416,10 +417,17 @@ if ! "${skip_data_prep}"; then
                     utils/fix_data_dir.sh "${dumpdir}/mfcc/${dset}"
 
                     # 4. Extract X-vector
+                    if [ -n "${average_spk_embed_utt_num}" ] && ["${average_spk_embed_utt_num}" -eq 0]; then
+                        # No average over utterances of the same speaker
+                        _xvector_stop_stage=1
+                    else
+                        _xvector_stop_stage=2
+                    fi
                     sid/nnet3/xvector/extract_xvectors.sh --nj "${_nj}" --cmd "${train_cmd}" \
                         "${xvector_exp}" \
                         "${dumpdir}/mfcc/${dset}" \
-                        "${dumpdir}/${spk_embed_tag}/${dset}"
+                        "${dumpdir}/${spk_embed_tag}/${dset}" \
+                        --stop_stage "${_xvector_stop_stage}"
 
                     # 5. Filter scp
                     # NOTE(kan-bayashi): Since sometimes mfcc or x-vector extraction is failed,
@@ -451,15 +459,31 @@ if ! "${skip_data_prep}"; then
                     if [ "${spk_embed_tool}" = "rawnet" ]; then
                         spk_embed_model="RawNet"
                     fi
-                    _scp="${data_feats}${_suf}/${dset}/wav.scp"
-                    _nj=$(min "${nj}" "$(wc <${_scp} -l)")
-                    scripts/utils/extract_spk_embed_utt.sh --nj "${_nj}" \
-                        --gpu "${_ngpu}" --cmd "${_cmd}" \
-                        --data "${data_feats}${_suf}/${dset}" \
-                        --output "${dumpdir}/${spk_embed_tag}/${dset}" \
-                        --spk_embed_tag "${spk_embed_tag}" \
-                        --pretrained_model "${spk_embed_model}" \
-                        --toolkit "${spk_embed_tool}"
+
+                    if [ -n "${average_spk_embed_utt_num}" ] && ["${average_spk_embed_utt_num}" -eq 0]; then
+                        _scp="${data_feats}${_suf}/${dset}/wav.scp"                    
+                        _nj=$(min "${nj}" "$(wc <${_scp} -l)")
+                        scripts/utils/extract_spk_embed_utt.sh --nj "${_nj}" \
+                            --gpu "${_ngpu}" --cmd "${_cmd}" \
+                            --data "${data_feats}${_suf}/${dset}" \
+                            --output "${dumpdir}/${spk_embed_tag}/${dset}" \
+                            --spk_embed_tag "${spk_embed_tag}" \
+                            --pretrained_model "${spk_embed_model}" \
+                            --toolkit "${spk_embed_tool}"
+                    else
+                        _args=
+                        if [ -n "${average_spk_embed_utt_num}" ]; then
+                            _args="--max_utts_to_avg ${average_spk_embed_utt_num}"
+                        fi
+                        ${_cmd} --gpu "${_ngpu}" ${dumpdir}/${spk_embed_tag}/${dset}/spk_embed_extract.log \
+                            pyscripts/utils/extract_spk_embed.py \
+                            --pretrained_model ${spk_embed_model} \
+                            --toolkit ${spk_embed_tool} \
+			                --spk_embed_tag ${spk_embed_tag} \
+                            ${data_feats}${_suf}/${dset} \
+                            ${dumpdir}/${spk_embed_tag}/${dset} \
+                            ${_args}
+                    fi
                 done
             fi
         elif "${use_sid}"; then
