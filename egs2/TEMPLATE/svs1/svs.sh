@@ -460,7 +460,7 @@ if ! "${skip_data_prep}"; then
                         spk_embed_model="RawNet"
                     fi
 
-                    if [ -n "${average_spk_embed_utt_num}" ] && ["${average_spk_embed_utt_num}" -eq 0]; then
+                    if [ -n "${average_spk_embed_utt_num}" ] && [ "${average_spk_embed_utt_num}" -eq 0 ]; then
                         _scp="${data_feats}${_suf}/${dset}/wav.scp"                    
                         _nj=$(min "${nj}" "$(wc <${_scp} -l)")
                         scripts/utils/extract_spk_embed_utt.sh --nj "${_nj}" \
