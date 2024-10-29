@@ -36,7 +36,14 @@ fi
 logdir="${output}/logdir"
 wav_scp="${data}/wav.scp"
 
-rm -r "${logdir}"/data.* "${logdir}"/spk_embed_extract.* 2>/dev/null || true
+
+if [ -d "${logdir}" ]; then
+    log "${logdir} already exists. Do you want to delete it and start over? [y/n]"
+    read -r response
+    if [ "${response}" == "y" ]; then
+        rm -r "${logdir}"
+    fi
+fi
 
 
 _scp="${wav_scp}"

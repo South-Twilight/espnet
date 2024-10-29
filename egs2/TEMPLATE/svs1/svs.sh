@@ -460,7 +460,7 @@ if ! "${skip_data_prep}"; then
                     _ngpu=0
                 fi
 
-                for dset in "${train_set}" "${valid_set}" ${test_sets}; do
+                for dset in $(echo "${train_set}" "${valid_set}" ${test_sets} | tr ' ' '\n' | sort -u); do
                     if [ "${dset}" = "${train_set}" ] || [ "${dset}" = "${valid_set}" ]; then
                         _suf="/org"
                     else
