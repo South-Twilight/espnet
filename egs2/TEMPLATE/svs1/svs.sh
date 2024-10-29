@@ -248,6 +248,16 @@ fi
 
 # Extra files for SVS
 utt_extra_files="label score.scp"
+if "${use_sid}"; then
+    utt_extra_files+=" utt2sid"
+fi
+if "${use_lid}"; then
+    utt_extra_files+=" utt2lid"
+fi
+if "${use_spk_contrastive_loss}"; then
+    utt_extra_files+=" utt2category"
+fi
+
 
 # Check token list type
 token_listdir="data/token_list/${token_type}"
@@ -507,8 +517,6 @@ if ! "${skip_data_prep}"; then
                     "${data_feats}/org/${train_set}/spk2sid" \
                     "${data_feats}${_suf}/${dset}/utt2spk" \
                     >"${data_feats}${_suf}/${dset}/utt2sid"
-
-                utt_extra_files="${utt_extra_files} utt2sid"
             done
         fi
     fi
@@ -535,8 +543,6 @@ if ! "${skip_data_prep}"; then
                     "${data_feats}/org/${train_set}/lang2lid" \
                     "${data_feats}${_suf}/${dset}/utt2lang" \
                     >"${data_feats}${_suf}/${dset}/utt2lid"
-
-                utt_extra_files="${utt_extra_files} utt2lid"
             done
         fi
     fi
