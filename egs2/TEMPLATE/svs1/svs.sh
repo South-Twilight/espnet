@@ -470,9 +470,10 @@ if ! "${skip_data_prep}"; then
                         spk_embed_model="RawNet"
                     fi
 
+                    _scp="${data_feats}${_suf}/${dset}/wav.scp"                    
+                    _nj=$(min "${nj}" "$(wc <${_scp} -l)")
+
                     if [ -n "${average_spk_embed_utt_num}" ] && [ "${average_spk_embed_utt_num}" -eq 0 ]; then
-                        _scp="${data_feats}${_suf}/${dset}/wav.scp"                    
-                        _nj=$(min "${nj}" "$(wc <${_scp} -l)")
                         scripts/utils/extract_spk_embed_utt.sh --nj "${_nj}" \
                             --gpu "${_ngpu}" --cmd "${_cmd}" \
                             --data "${data_feats}${_suf}/${dset}" \
@@ -485,11 +486,11 @@ if ! "${skip_data_prep}"; then
                         if [ -n "${average_spk_embed_utt_num}" ]; then
                             _args="--max_utts_to_avg ${average_spk_embed_utt_num}"
                         fi
-                        ${_cmd} --gpu "${_ngpu}" ${dumpdir}/${spk_embed_tag}/${dset}/spk_embed_extract.log \
+                        ${_cmd} --gpu "${_ngpu}" JOB=1:"${_nj}" ${dumpdir}/${spk_embed_tag}/${dset}/spk_embed_extract.JOB.log \
                             pyscripts/utils/extract_spk_embed.py \
                             --pretrained_model ${spk_embed_model} \
                             --toolkit ${spk_embed_tool} \
-			                --spk_embed_tag ${spk_embed_tag} \
+                            --spk_embed_tag ${spk_embed_tag} \
                             ${data_feats}${_suf}/${dset} \
                             ${dumpdir}/${spk_embed_tag}/${dset} \
                             ${_args}
