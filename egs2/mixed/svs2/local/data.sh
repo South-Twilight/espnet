@@ -51,9 +51,11 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     if [[ -z "${datasets_path[0]}" ]]; then
         datasets_path=("${datasets_path[@]:1}")
     fi
-    if [ -e "data" ]; then
-        echo "delete data"
-        rm -r "data"
+    if [ -e "data/raw_data" ]; then
+        echo "Please check whether you need to delete data."
+        echo "If not, please skip this stage."
+        # rm -r "data"
+        exit
     fi
     for x in ${train_dev} ${test_set} ${train_set}; do
         echo "process for subset: ${x}"
@@ -65,9 +67,9 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
                 dataset=$(basename ${org_workspace})
                 echo $dir
                 utils/copy_data_dir.sh ${dir}/${x} data/raw_data/"${dataset}_${x}"
-                python local/convert_r2a_path.py ${org_workspace}/svs1 data/raw_data/"${dataset}_${x}"/wav.scp \
+                python local/convert_r2a_path.py ${org_workspace}/svs2 data/raw_data/"${dataset}_${x}"/wav.scp \
                     data/raw_data/"${dataset}_${x}"/wav.scp.tmp
-                python local/convert_r2a_path.py ${org_workspace}/svs1 data/raw_data/"${dataset}_${x}"/score.scp \
+                python local/convert_r2a_path.py ${org_workspace}/svs2 data/raw_data/"${dataset}_${x}"/score.scp \
                     data/raw_data/"${dataset}_${x}"/score.scp.tmp
                 sort -o data/raw_data/"${dataset}_${x}"/wav.scp.tmp data/raw_data/"${dataset}_${x}"/wav.scp.tmp
                 sort -o data/raw_data/"${dataset}_${x}"/score.scp.tmp data/raw_data/"${dataset}_${x}"/score.scp.tmp

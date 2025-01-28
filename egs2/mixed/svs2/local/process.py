@@ -75,13 +75,21 @@ def fix_phns(
     if len(org_phns) == len(pro_phns):
         for i in range(len(org_phns)):
             if org_phns[i] != pro_phns[i]:
-                print("Warning: Mismatch in syllable [{}]-> ace: {} and org: {}, {}-th phoneme {} vs {} in {}".format(
-                        lyric, "_".join(pro_phns), "_".join(org_phns), i, pro_phns[i], org_phns[i], key
-                ))
+                message = (
+                    "Warning: Mismatch in syllable [{}]-> ace: {} and org: {}, "
+                    "{}-th phoneme {} vs {} in {}"
+                ).format(
+                    lyric, "_".join(pro_phns), "_".join(org_phns), i, pro_phns[i], org_phns[i], key
+                )
+                # print(message)
             new_labels.append([labels[index][0], labels[index][1], convert_phn_with_lang(pro_phns[i], lang)])
             index += 1
     else:
-        print("Warning: Different length in syllable [{}]-> ace: {} and org: {} in {}".format(lyric, pro_phns, org_phns, key))
+        message = (
+            "Warning: Different length in syllable [{}]-> ace: {} and org: {}, "
+            "in {}"
+        ).format(lyric, pro_phns, org_phns, key)
+        # print(message)
         st = float(labels[index][0])
         index += len(org_phns) 
         ed = float(labels[index - 1][1])

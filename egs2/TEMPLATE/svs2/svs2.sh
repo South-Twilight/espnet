@@ -131,6 +131,7 @@ sample_data=false
 samples_num=10
 train_rl=false
 rl_dir=${dumpdir}/"rl"
+rl_metrics="mcd"
 
 # [Task dependent] Set the datadir name created by local/data.sh
 train_set=""     # Name of training set.
@@ -273,6 +274,9 @@ elif [ "${feats_type}" = raw ]; then
     #data_audio="${dumpdir}/audio_raw"
     data_feats="${dumpdir}/${feats_type}"
     data_extract="${dumpdir}/extracted"
+elif [ "${feats_type}" = raw_rl ]; then
+    data_feats="${dumpdir}/${feats_type}"
+    data_extract="${dumpdir}/extracted_rl"
 else
     log "${help_message}"
     log "Error: not supported: --feats_type ${feats_type}"
@@ -311,7 +315,7 @@ else
         kmeans_feature_conf="{type=encodec,conf={fs=48000,bandwidth=12,multilayer_feature=False,layer=${layer},download_path=${encodec_url}}}"
     elif [ ${kmeans_feature_type} != "multi" ]; then
         s3prl_conf="{upstream=${kmeans_feature_type}}"
-        kmeans_feature_conf="{type=s3prl,conf={s3prl_conf=${s3prl_conf},download_dir=ckpt,multilayer_feature=False,layer=${layer}}}"
+        kmeans_feature_conf="{type=s3prl,conf={s3prl_conf=${s3prl_conf},multilayer_feature=False,layer=${layer}}}"
     fi
 fi
 if [ ${kmeans_feature_type} = "multi" ]; then
@@ -328,7 +332,7 @@ else
         token_file=token_${kmeans_feature_type}_${nclusters}_${layer}
     fi
     if [ -z ${km_dir} ]; then
-        km_dir="${expdir}"/kmeans/$(echo "${kmeans_feature}" | tr "/" "_")_${nclusters}clusters
+        km_dir="${expdir}"/kmeans_${feats_type}/$(echo "${kmeans_feature}" | tr "/" "_")_${nclusters}clusters
     fi
 fi
 
@@ -420,7 +424,7 @@ if ! "${skip_data_prep}"; then
         # If nothing is need, then format_wav_scp.sh does nothing:
         # i.e. the input file format and rate is same as the output.
 
-        if [ "${feats_type}" = raw ]; then
+        if [ "${feats_type}" = raw ] || [ "${feats_type}" = raw_rl ]; then
             log "Stage 2: Format wav.scp: data/ -> ${data_feats}/"
             for dset in "${train_set}" "${valid_set}" ${test_sets} ; do
                 if [ "${dset}" = "${train_set}" ] || [ "${dset}" = "${valid_set}" ]; then
@@ -528,7 +532,7 @@ if ! "${skip_data_prep}"; then
             done
             # Remove short utterances
             _feats_type="$(<${data_feats}/${dset}/feats_type)"
-            if [ "${_feats_type}" = raw ]; then
+            if [ "${_feats_type}" = raw ] || [ "${feats_type}" = raw_rl ]; then
                 _fs=$(python3 -c "import humanfriendly as h;print(h.parse_size('${fs}'))")
                 _min_length=$(python3 -c "print(int(${min_wav_duration} * ${_fs}))")
                 _max_length=$(python3 -c "print(int(${max_wav_duration} * ${_fs}))")
@@ -1088,14 +1092,15 @@ if ! "${skip_train}"; then
         _opts+="--nclusters ${nclusters} "
         
         if "${train_rl}"; then
-            _opts+="--train_data_path_and_name_and_type ${rl_dir}/${train_set}/neg_samples_idx,neg_idx,npy "
-            _opts+="--train_data_path_and_name_and_type ${rl_dir}/${train_set}/pos_samples_idx,pos_idx,npy "
-            _opts+="--train_shape_file ${rl_dir}/${train_set}/pos_idx_shape "
-            _opts+="--train_shape_file ${rl_dir}/${train_set}/neg_idx_shape "
-            _opts+="--valid_data_path_and_name_and_type ${rl_dir}/${valid_set}/pos_samples_idx,pos_idx,npy "
-            _opts+="--valid_data_path_and_name_and_type ${rl_dir}/${valid_set}/neg_samples_idx,neg_idx,npy "
-            _opts+="--valid_shape_file ${rl_dir}/${valid_set}/pos_idx_shape "
-            _opts+="--valid_shape_file ${rl_dir}/${valid_set}/neg_idx_shape "
+            metrics_dir="$(echo "${rl_metrics}" | tr ' ' '_')"
+            _opts+="--train_data_path_and_name_and_type ${rl_dir}/${train_set}/${metrics_dir}/neg_samples_idx,neg_idx,npy "
+            _opts+="--train_data_path_and_name_and_type ${rl_dir}/${train_set}/${metrics_dir}/pos_samples_idx,pos_idx,npy "
+            _opts+="--train_shape_file ${rl_dir}/${train_set}/${metrics_dir}/pos_idx_shape "
+            _opts+="--train_shape_file ${rl_dir}/${train_set}/${metrics_dir}/neg_idx_shape "
+            _opts+="--valid_data_path_and_name_and_type ${rl_dir}/${valid_set}/${metrics_dir}/pos_samples_idx,pos_idx,npy "
+            _opts+="--valid_data_path_and_name_and_type ${rl_dir}/${valid_set}/${metrics_dir}/neg_samples_idx,neg_idx,npy "
+            _opts+="--valid_shape_file ${rl_dir}/${valid_set}/${metrics_dir}/pos_idx_shape "
+            _opts+="--valid_shape_file ${rl_dir}/${valid_set}/${metrics_dir}/neg_idx_shape "
         fi
 
         # shellcheck disable=SC2086
@@ -1271,7 +1276,7 @@ if ! "${skip_eval}"; then
                     done | LC_ALL=C sort -k1 > "${_dir}/samples_tmp/samples_shape"
                 else
                     # rl data preparation substage 2 (generate samples)
-                    _tgt_path="${rl_dir}/${dset}/samples"
+                    _tgt_path="${rl_dir}/${dset}/raw_samples"
                     mkdir -p ${_tgt_path}
                     for i in $(seq "${_nj}"); do
                         while read -r key src_path; do

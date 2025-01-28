@@ -15,11 +15,13 @@ win_length=1280
 score_feats_extract=syllable_score_feats   # frame_score_feats | syllable_score_feats
 
 # kmeans related
-kmeans_feature="multi/hubert_l_6+wavlm_l_6+wavlm_l_23" # split with '/'
-                               # multi_token: "multi/wavlm6+large6"
-                               # single token: "wavlm_large/6" | "encodec/1" | "xls_r_300m/6", use model_type/layer_index
-multi_token="hubert_large_ll60k_128_6 wavlm_large_128_6 wavlm_large_128_23" # concat with ' ', use prepared 'model_type_nclusters_layer_index' tokens
-               # e.g. "hubert_large_ll60k_128_6_RVQ_0 wavlm_large_128_6_RVQ_0 wavlm_large_128_23_RVQ_0"
+kmeans_feature="multi/hubert_large_6+wavlm_large_6+wavlm_large_23"
+# split with '/', use model_type/layer_index, e.g.:
+# 'multi layer': "multi/hubert_l_6+wavlm_l_6+wavlm_l_23";
+# 'single layer': "hubert_larg_ll60k/6" | "wavlm_large/6" | "wavlm_large/23" | "xls_r_300m/6";
+multi_token="hubert_large_ll60k_128_6 wavlm_large_128_6 wavlm_large_128_23"
+# concat with ' ', use prepared 'model_type_nclusters_layer_index' tokens
+# e.g. "hubert_large_ll60k_128_6_RVQ_0 wavlm_large_128_6_RVQ_0 wavlm_large_128_23_RVQ_0"
 mix_type="frame" # frame | sequencee
 nclusters=128
 RVQ_layers=1
@@ -85,11 +87,10 @@ gpu_inference=true
     --test_sets "${test_sets}" \
     --score_feats_extract "${score_feats_extract}" \
     --srctexts "data/${train_set}/text" \
-    --RVQ_layers "${RVQ_layers}" \
-    --portion "${portion}" \
-    --km_dir "${km_dir}" \
-    --kmeans_opts "--batch_bins 4800000" \
+    --kmeans_opts "--stage  --stop_stage 3 --batch_bins 4800000" \
     --kmeans_feature "${kmeans_feature}" \
+    --km_dir "${km_dir}" \
+    --portion "${portion}" \
     --multi_token "${multi_token}" \
     --mix_type "${mix_type}" \
     --nclusters "${nclusters}" \
