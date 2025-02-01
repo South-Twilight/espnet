@@ -350,7 +350,7 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     else
         rl_train_args+=" --init_param ${pretrain_checkpoint}:svs:svs "
     fi
-    train_tag="svs_$(basename "$train_config" .yaml)#$(echo "$select_metrics" | tr ' ' '#')"
+    train_tag="svs_$(basename "$rl_config" .yaml)#$(echo "$select_metrics" | tr ' ' '#')"
 
     ./svs2.sh "${svs_opts[@]}" \
             --kmeans_opts "--stage 1 --stop_stage 3 --batch_bins 4800000" \
@@ -373,51 +373,20 @@ fi
 if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
     log "Stage 3: infer model with RL"
     
-    prep_rl_data=false
-    train_rl=false
-    use_refsvs=true
-    if ${use_refsvs}; then
-        rl_train_args+=" --init_param ${pretrain_checkpoint}:svs:svs ${pretrain_checkpoint}:svs:ref_svs "
-    else
-        rl_train_args+=" --init_param ${pretrain_checkpoint}:svs:svs "
-    fi
-    ./svs2.sh \
-            --lang zh \
-            --stage 8 \
-            --stop_stage 8 \
-            --local_data_opts "--stage 0" \
-            --feats_type raw \
-            --pitch_extract "${pitch_extract}" \
-            --fs "${fs}" \
-            --fmax "${fmax}" \
-            --fmin "${fmin}" \
-            --n_fft "${n_fft}" \
-            --n_shift "${n_shift}" \
-            --win_length "${win_length}" \
-            --token_type phn \
-            --g2p ${g2p} \
-            --cleaner ${cleaner} \
-            --preset_layer ${preset_layer} \
-            --preset_token ${preset_token} \
-            --use_sid ${use_sid} \
-            --use_lid ${use_lid} \
-            --train_config "${rl_config}" \
-            --inference_config "${inference_config}" \
-            --train_set "${train_set}" \
-            --valid_set "${valid_set}" \
-            --test_sets "${test_sets}" \
-            --score_feats_extract "${score_feats_extract}" \
-            --srctexts "data/${train_set}/text" \
-            --RVQ_layers "${RVQ_layers}" \
-            --kmeans_opts "--batch_bins 4800000" \
-            --kmeans_feature "${kmeans_feature}" \
-            --multi_token "${multi_token}" \
-            --mix_type "${mix_type}" \
-            --nclusters "${nclusters}" \
-            --RVQ_layers "${RVQ_layers}" \
-            --ngpu 1 \
-            --train_rl "${train_rl}" \
-            --train_args "${rl_train_args}" \
-            --tag "${train_tag}" 
+    train_tag="svs_$(basename "$train_config" .yaml)#$(echo "$select_metrics" | tr ' ' '#')"
 
+    ./svs2.sh "${svs_opts[@]}" \
+            --kmeans_opts "--stage 1 --stop_stage 3 --batch_bins 4800000" \
+            --multi_token "${multi_token}" \
+             --stage 8 \
+            --stop_stage 8 \
+            --feats_type "${feats_type}" \
+            --train_set "${rl_train_set}" \
+            --valid_set "${rl_valid_set}" \
+            --test_sets "${select_sets}" \
+            --srctexts "data/${rl_train_set}/text" \
+            --train_config "${rl_config}" \
+            --tag "${train_tag}" \
+            --rl_metrics "${select_metrics}"
+            
 fi
