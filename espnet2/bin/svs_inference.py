@@ -451,6 +451,7 @@ def inference(
     prep_rl_data: bool = False,
     sample_data: bool = False,
     samples_num: int = 1,
+    samples_dir_name: Optional[str] = "samples",
 ):
     """Perform SVS model decoding."""
     if batch_size > 1:
@@ -529,18 +530,20 @@ def inference(
         output_dir / "durations/durations", "w"
     ) as duration_writer, open(
         output_dir / "focus_rates/focus_rates", "w"
-    ) as focus_rate_writer:
+    ) as focus_rate_writer, open(
+        output_dir / "wav" / "wav.scp", "w"
+    )as wavscp_writer:
         # RL data prep substage 1: get sample idx
         if sample_data:
-            (output_dir / "samples_tmp").mkdir(parents=True, exist_ok=True)
-            sample_writer = NpyScpWriter(output_dir / "samples_tmp", output_dir / "samples_tmp" / "samples_idx.scp")
-            sample_shape_writer = open(output_dir / "samples_tmp" / "samples_shape", "w")
+            (output_dir / f"{samples_dir_name}_comb").mkdir(parents=True, exist_ok=True)
+            sample_writer = NpyScpWriter(output_dir / f"{samples_dir_name}_comb", output_dir / f"{samples_dir_name}_comb" / "samples_idx.scp")
+            sample_shape_writer = open(output_dir / f"{samples_dir_name}_comb" / "samples_shape", "w")
 
         # RL data prep substage 2: generate wav with coreresponding sample idx
         if prep_rl_data and not sample_data:
-            (output_dir / "samples").mkdir(parents=True, exist_ok=True)
+            (output_dir / f"{samples_dir_name}").mkdir(parents=True, exist_ok=True)
             (output_dir / "wav").mkdir(parents=True, exist_ok=True)
-            idx_writer = NpyScpWriter(output_dir / "samples", output_dir / "samples" / "samples_idx.scp")
+            idx_writer = NpyScpWriter(output_dir / f"{samples_dir_name}", output_dir / f"{samples_dir_name}" / "samples_idx.scp")
             wav_writer = open(output_dir / "wav" / "wav.scp", "w")
 
         for idx, (keys, batch) in enumerate(loader, 1):
@@ -703,6 +706,7 @@ def inference(
                     singingGenerate.fs,
                     "PCM_16",
                 )
+                wavscp_writer.write(f"{key} {os.path.abspath(output_dir / 'wav' / f'{key}.wav')}\n")
         
     # remove files if those are not included in output dict
     if output_dict.get("feat_gen") is None:
@@ -868,6 +872,12 @@ def get_parser():
         type=int,
         default=1,
         help="number of chosen smaples (for RL)",
+    )
+    parser.add_argument(
+        "--samples_dir_name",
+        type=str,
+        default=None,
+        help="name of samples directory (for RL)",
     )
     group.add_argument(
         "--svs_task",

@@ -378,7 +378,7 @@ class SVSTask(AbsTask):
             raise RuntimeError("token_list must be str or dict")
 
         vocab_size = len(token_list)
-        logging.info(f"Vocabulary size: {vocab_size }")
+        logging.info(f"Vocabulary size: {vocab_size}")
 
         kwargs = dict()
 
@@ -517,7 +517,7 @@ class SVSTask(AbsTask):
         model_class = model_type_choices.get_class(args.model_type)
         model = model_class(
             **kwargs,
-            **args.model_conf, 
+            **args.model_conf,
         )
         return model
 

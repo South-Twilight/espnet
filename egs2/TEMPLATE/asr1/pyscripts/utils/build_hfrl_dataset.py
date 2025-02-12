@@ -199,18 +199,18 @@ def main():
 
     # (5) write and dump
     metrics_dir = "_".join(args.metric_names)
-    pos_npy_dir = os.path.join(args.output_dir, "eval_metrics", pos_name)
+    pos_npy_dir = os.path.join(args.output_dir, metrics_dir, pos_name)
     if not os.path.exists(pos_npy_dir):
-        os.makedirs(os.path.join(args.output_dir, "eval_metrics", pos_name))
+        os.makedirs(os.path.join(args.output_dir, metrics_dir, pos_name))
     pos_writers = [
         NpyScpWriter(pos_npy_dir, os.path.join(args.output_dir, metrics_dir, f"pos_samples_{name}")) for name in samples_keys
     ]
     pos_shape_writers = [
         open(os.path.join(args.output_dir, metrics_dir, f"pos_{name}_shape"), "w") for name in samples_keys
     ]
-    neg_npy_dir = os.path.join(args.output_dir, "eval_metrics", neg_name)
+    neg_npy_dir = os.path.join(args.output_dir, metrics_dir, neg_name)
     if not os.path.exists(neg_npy_dir):
-        os.makedirs(os.path.join(args.output_dir, "eval_metrics", neg_name))
+        os.makedirs(os.path.join(args.output_dir, metrics_dir, neg_name))
     neg_writers = [
         NpyScpWriter(neg_npy_dir, os.path.join(args.output_dir, metrics_dir, f"neg_samples_{name}")) for name in samples_keys
     ]

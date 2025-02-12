@@ -57,15 +57,17 @@ pitch_extract=dio
 use_sid=true
 use_lid=true
 
-# infer
+# train & infer related
 gpu_inference=true
+ngpu=1
 
 # rl related
 prep_rl_data=false
 sample_data=false
 samples_num=10
+samples_policy="TopBottomK"
 rl_data="dump/rl"
-select_metrics="spk_similarity"
+select_metrics="singmos"
 use_refsvs=false
 
 pretrain_checkpoint="exp/svs_train_toksing.v1_raw_phn_none_zh/valid.loss.best.pth"
@@ -80,6 +82,8 @@ feats_type="raw_rl"
 
 . utils/parse_options.sh || exit 1;
 
+samples_dir_name="samples_${samples_num}_${samples_policy}"
+            
 # svs opts
 svs_opts=(
     --lang mix
@@ -115,10 +119,10 @@ svs_opts=(
     --mix_type "${mix_type}" 
     --nclusters "${nclusters}" 
     --RVQ_layers "${RVQ_layers}" 
-    --ngpu 1 
+    --ngpu "${ngpu}" 
     --vocoder_file "${vocoder_file}"
 )
-            
+
 if [ ${stage} -le 0 ] && [ ${stop_stage} -ge 0 ]; then
     log "Please run `run.sh` to finish data preparation and have pretrained a base model first."
     exit 0
@@ -127,12 +131,13 @@ fi
 if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     log "Stage 1: Prepare dataset for training"
     
-    sub_stage=5
+    sub_stage=2
     sub_stop_stage=5
     portion_selected=0.02
 
     if [ ${sub_stage} -le 1 ] && [ ${sub_stop_stage} -ge 1 ]; then
         log "substage 1.1: Sample subsets for RL training with portion ${portion_selected}"
+        # target dircetory: raw_rl
         for subset in "${train_set}" "${valid_set}" ${test_sets}; do
             subset_dir="data/${subset}"
             output_subset_dir="data/rl_${subset}"
@@ -161,8 +166,6 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
         done
 
         ./svs2.sh "${svs_opts[@]}" \
-            --kmeans_opts "--stage 1 --stop_stage 3 --batch_bins 4800000" \
-            --multi_token "${multi_token}" \
             --stage 2 \
             --stop_stage 3 \
             --feats_type "${feats_type}" \
@@ -171,9 +174,10 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
             --test_sets "${rl_test_sets}" \
             --srctexts "data/${rl_train_set}/text" 
         
+        # single layer
         for feature in ${features_list}; do
             ./svs2.sh "${svs_opts[@]}" \
-                --kmeans_opts "--stage 1 --stop_stage 3 --batch_bins 4800000" \
+                --kmeans_opts "--stage 3 --stop_stage 3 --batch_bins 4800000" \
                 --stage 4 \
                 --stop_stage 4 \
                 --kmeans_feature "${feature}" \
@@ -184,6 +188,7 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
                 --srctexts "data/${rl_train_set}/text" 
         done
 
+        # multi layer
         ./svs2.sh "${svs_opts[@]}" \
             --multi_token "${multi_token}" \
             --stage 4 \
@@ -197,9 +202,10 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
      
     if [ ${sub_stage} -le 2 ] && [ ${sub_stop_stage} -ge 2 ]; then
         log "substage 1.2: Sample token idx for train_set and valid_set (rl data preparation stage 1)"
+        # target directory: exp/**/samples_tmp
         prep_rl_data=true
         sample_data=true
-        train_tag="train_toksing.v1_raw_phn_none_zh"
+        train_tag=$(echo "${pretrain_checkpoint}" | awk -F'/' '{print $(NF-1)}' | sed 's/^svs_//')
 
         ./svs2.sh "${svs_opts[@]}" \
             --kmeans_opts "--stage 1 --stop_stage 3 --batch_bins 4800000" \
@@ -214,14 +220,16 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
             --prep_rl_data "${prep_rl_data}" \
             --sample_data "${sample_data}" \
             --samples_num "${samples_num}" \
+            --samples_dir_name "${samples_dir_name}" \
             --tag "${train_tag}" 
     fi
 
     if [ ${sub_stage} -le 3 ] && [ ${sub_stop_stage} -ge 3 ]; then
         log "substage 1.3: Generate wav for sampled token idx"
+        # target directory: dump/rl/${dset}/raw_samples_pooling
         prep_rl_data=true
         sample_data=false
-        train_tag="train_toksing.v1_raw_phn_none_zh"
+        train_tag=$(echo "${pretrain_checkpoint}" | awk -F'/' '{print $(NF-1)}' | sed 's/^svs_//')
 
         ./svs2.sh "${svs_opts[@]}" \
             --kmeans_opts "--stage 1 --stop_stage 3 --batch_bins 4800000" \
@@ -235,13 +243,16 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
             --srctexts "data/${rl_train_set}/text" \
             --prep_rl_data "${prep_rl_data}" \
             --sample_data "${sample_data}" \
+            --samples_dir_name "${samples_dir_name}" \
             --tag "${train_tag}" 
 
         for dset in ${select_sets}; do
             # preprocess wav path
             org_path="data/${dset}/wav.scp"
-            pred_path="${rl_data}/${dset}/samples/wav.scp"
-            gt_path="${rl_data}/${dset}/samples/wav_gt.scp"
+            tgt_dir_path="${rl_data}/${dset}/raw_samples_pooling/${samples_dir_name}"
+            mkdir -p ${tgt_dir_path}
+            pred_path="${tgt_dir_path}/wav.scp"
+            gt_path="${tgt_dir_path}/wav_gt.scp"
             awk -v samples_num=$samples_num '
             {
                 uid = $1
@@ -265,8 +276,8 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
         fi
         for dset in ${select_sets}; do
             # Metrics
-            src_dir="$(pwd)/${rl_data}/${dset}/samples"
-            tgt_dir="$(pwd)/${rl_data}/${dset}/eval_metrics/raw"
+            src_dir="$(pwd)/${rl_data}/${dset}/raw_samples_pooling/${samples_dir_name}"
+            tgt_dir="$(pwd)/${rl_data}/${dset}/raw_samples_pooling/${samples_dir_name}/eval_metric"
             mkdir -p ${tgt_dir}
             for metric in ${select_metrics}; do
                 echo ${tgt_dir}/eval_${metric}.txt
@@ -307,27 +318,27 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
 
         for dset in ${select_sets}; do
             # Metrics
-            src_dir=${rl_data}/${dset}/eval_metrics/raw
-            tgt_dir=${rl_data}/${dset}/
-            sample_dir=${rl_data}/${dset}/raw_samples
+            eval_dir="${rl_data}/${dset}/raw_samples_pooling/${samples_dir_name}/eval_metric"
+            tgt_dir=${rl_data}/${dset}/${samples_dir_name}
+            sample_dir=${rl_data}/${dset}/raw_samples_pooling/${samples_dir_name}
             metrics_opts=
             for metric in ${select_metrics}; do
                 if [ ${metric} == "singmos" ]; then
                     metrics_opts+="--metric_names singmos "
                     metrics_opts+="--metric_weight 1.0 "
-                    metrics_opts+="--metric_files ${src_dir}/eval_${metric}.txt "
+                    metrics_opts+="--metric_files ${eval_dir}/eval_${metric}.txt "
                 elif [ ${metric} == "mcd" ]; then
                     metrics_opts+="--metric_names mcd "
                     metrics_opts+="--metric_weight 1.0 "
-                    metrics_opts+="--metric_files ${src_dir}/eval_${metric}.txt "
+                    metrics_opts+="--metric_files ${eval_dir}/eval_${metric}.txt "
                 elif [ ${metric} == "f0_rmse" ]; then
                     metrics_opts+="--metric_names f0_rmse "
                     metrics_opts+="--metric_weight 1.0 "
-                    metrics_opts+="--metric_files ${src_dir}/eval_${metric}.txt "
+                    metrics_opts+="--metric_files ${eval_dir}/eval_${metric}.txt "
                 elif [ ${metric} == "spk_similarity" ]; then
                     metrics_opts+="--metric_names spk_similarity "
                     metrics_opts+="--metric_weight 1.0 "
-                    metrics_opts+="--metric_files ${src_dir}/eval_${metric}.txt "
+                    metrics_opts+="--metric_files ${eval_dir}/eval_${metric}.txt "
                 fi
             done
 
@@ -350,22 +361,22 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     else
         rl_train_args+=" --init_param ${pretrain_checkpoint}:svs:svs "
     fi
-    train_tag="svs_$(basename "$rl_config" .yaml)#$(echo "$select_metrics" | tr ' ' '#')"
+    train_tag="$(basename "$rl_config" .yaml)#$(echo "$select_metrics" | tr ' ' '#')"
 
     ./svs2.sh "${svs_opts[@]}" \
-            --kmeans_opts "--stage 1 --stop_stage 3 --batch_bins 4800000" \
             --multi_token "${multi_token}" \
              --stage 7 \
             --stop_stage 7 \
             --feats_type "${feats_type}" \
             --train_set "${rl_train_set}" \
             --valid_set "${rl_valid_set}" \
-            --test_sets "${select_sets}" \
+            --test_sets "${rl_test_sets}" \
             --srctexts "data/${rl_train_set}/text" \
             --train_config "${rl_config}" \
             --train_rl "${train_rl}" \
             --train_args "${rl_train_args}" \
             --tag "${train_tag}" \
+            --samples_dir_name "${samples_dir_name}" \
             --rl_metrics "${select_metrics}"
             
 fi
@@ -373,20 +384,41 @@ fi
 if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
     log "Stage 3: infer model with RL"
     
-    train_tag="svs_$(basename "$train_config" .yaml)#$(echo "$select_metrics" | tr ' ' '#')"
+    train_tag="$(basename "$rl_config" .yaml)#$(echo "$select_metrics" | tr ' ' '#')"
 
     ./svs2.sh "${svs_opts[@]}" \
-            --kmeans_opts "--stage 1 --stop_stage 3 --batch_bins 4800000" \
             --multi_token "${multi_token}" \
              --stage 8 \
             --stop_stage 8 \
             --feats_type "${feats_type}" \
             --train_set "${rl_train_set}" \
             --valid_set "${rl_valid_set}" \
-            --test_sets "${select_sets}" \
+            --test_sets "${rl_test_sets}" \
             --srctexts "data/${rl_train_set}/text" \
             --train_config "${rl_config}" \
             --tag "${train_tag}" \
+            --samples_dir_name "${samples_dir_name}" \
+            --rl_metrics "${select_metrics}"
+            
+fi
+
+if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
+    log "Stage 4: score generated wavs"
+    
+    train_tag="$(basename "$rl_config" .yaml)#$(echo "$select_metrics" | tr ' ' '#')"
+
+    ./svs2.sh "${svs_opts[@]}" \
+            --multi_token "${multi_token}" \
+             --stage 9 \
+            --stop_stage 9 \
+            --feats_type "${feats_type}" \
+            --train_set "${rl_train_set}" \
+            --valid_set "${rl_valid_set}" \
+            --test_sets "${rl_test_sets}" \
+            --srctexts "data/${rl_train_set}/text" \
+            --train_config "${rl_config}" \
+            --tag "${train_tag}" \
+            --samples_dir_name "${samples_dir_name}" \
             --rl_metrics "${select_metrics}"
             
 fi

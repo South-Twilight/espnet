@@ -8,6 +8,17 @@ model_conf:
     algo: dpo
     length_norm: false
     beta: 0.1
+    fixed_modules: [
+        "phone_encode_layer",
+        "midi_encode_layer",
+        "duration_encode_layer",
+        "encoder",
+        "f0_predictor",
+        "duration_predictor",
+        "sid_emb",
+        "lid_emb",
+        "projection",
+    ]
 
 svs: toksing           # model architecture
 svs_conf:                        # keyword arguments for the selected model
@@ -75,22 +86,22 @@ optim_conf:           # keyword arguments for selected optimizer
 ##########################################################
 #                OTHER TRAINING SETTING                  #
 ##########################################################
-#num_iters_per_epoch: 500    # number of iterations per epoch
-max_epoch: 10
-grad_clip: 1.0              # gradient clipping norm
+num_iters_per_epoch: 5000    # number of iterations per epoch
+max_epoch: 8
+grad_clip: 50.0              # gradient clipping norm
 grad_noise: false           # whether to use gradient noise injection
 accum_grad: 100               # gradient accumulation
 
 batch_type: sorted
-batch_size: 64
+batch_size: 32
 
 sort_in_batch: descending   # how to sort data in making batch
 sort_batch: descending      # how to sort created batches
-num_workers: 10              # number of workers of data loader
+num_workers: 4              # number of workers of data loader
 train_dtype: float32        # dtype in training
-log_interval: null          # log interval in iterations
+log_interval: 1000          # log interval in iterations
 keep_nbest_models: 5        # number of models to keep
-num_att_plot: 3             # number of attention figures to be saved in every check
+num_att_plot: 0             # number of attention figures to be saved in every check
 seed: 0                     # random seed number
 best_model_criterion:
 -   - valid

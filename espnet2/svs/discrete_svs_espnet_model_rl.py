@@ -68,6 +68,8 @@ class ESPnetDiscreteRLSVSModel(ESPnetSVSModel):
         reward_margin: float = 0.0,
         # discrete realted
         discrete_token_layers: int = 1,
+        # fixed modules
+        fixed_modules: list = [],
     ):
         """Initialize ESPnetSVSModel module."""
         super().__init__(
@@ -91,6 +93,7 @@ class ESPnetDiscreteRLSVSModel(ESPnetSVSModel):
         self.rl_loss_weight = rl_loss_weight
         self.length_norm = length_norm
         self.reward_margin = reward_margin
+        self.fixed_modules = fixed_modules
         if algo in ["simpo"]:
             del reflm
             self.ref_svs = None
@@ -414,15 +417,7 @@ class ESPnetDiscreteRLSVSModel(ESPnetSVSModel):
         all_length = torch.cat([pos_length, neg_length]) # [B_pos + B_neg]
         assert n_neg % n_pos == 0, (n_neg, n_pos)
 
-        fixed_modules = [
-            "phone_encode_layer",
-            "midi_encode_layer",
-            "duration_encode_layer",
-            "encoder",
-            "f0_predictor",
-            "duration_predictor"
-        ]
-        for fix_module_name in fixed_modules:
+        for fix_module_name in self.fixed_modules:
             for name, module in self.svs.named_modules():
                 if name.startswith(fix_module_name + ".") or name == fix_module_name: 
                     module.eval()
@@ -437,7 +432,8 @@ class ESPnetDiscreteRLSVSModel(ESPnetSVSModel):
         stats["svs_loss"] = stats.pop("loss")
 
         if self.ref_svs is not None:
-            _, _, _, ref_logits = self.ref_svs(**batch)
+            with torch.no_grad():
+                _, _, _, ref_logits = self.ref_svs(**batch)
         else:
             ref_logits = None
 
@@ -478,7 +474,7 @@ class ESPnetDiscreteRLSVSModel(ESPnetSVSModel):
             all_length (torch.Tensor): length of logits. (B_pos + B_neg)
             n_pos (torch.Tensor): number of positive. (B_pos,)
         """
-        assert policy_logits.size(1) == ref_logits.size(1), f"policy({policy_logits.shape}) != ref({ref_logits.shape}) on T"
+        assert policy_logits.size(1) == ref_logits.size(1), f"policy({policy_logits.shape}) != ref({ref_logits.shape}) on T."
         assert policy_logits.size(1) == all_idx.size(1), f"policy({policy_logits.shape}) != all_idx({all_idx.shape}) on T"
         # nq = discrete token layer
         # (1) mask for pad

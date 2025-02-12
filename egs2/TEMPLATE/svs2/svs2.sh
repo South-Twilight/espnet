@@ -129,9 +129,14 @@ download_model=""   # Download a model from Model Zoo and use it for decoding.
 prep_rl_data=false
 sample_data=false
 samples_num=10
+samples_dir_name="samples_${samples_num}"
 train_rl=false
 rl_dir=${dumpdir}/"rl"
 rl_metrics="mcd"
+
+# VERSA eval related
+skip_versa=false # Skip scoring stages.
+versa_config=conf/versa.yaml # VERSA evaluation configuration.
 
 # [Task dependent] Set the datadir name created by local/data.sh
 train_set=""     # Name of training set.
@@ -1092,7 +1097,7 @@ if ! "${skip_train}"; then
         _opts+="--nclusters ${nclusters} "
         
         if "${train_rl}"; then
-            metrics_dir="$(echo "${rl_metrics}" | tr ' ' '_')"
+            metrics_dir="${samples_dir_name}/$(echo "${rl_metrics}" | tr ' ' '_')"
             _opts+="--train_data_path_and_name_and_type ${rl_dir}/${train_set}/${metrics_dir}/neg_samples_idx,neg_idx,npy "
             _opts+="--train_data_path_and_name_and_type ${rl_dir}/${train_set}/${metrics_dir}/pos_samples_idx,pos_idx,npy "
             _opts+="--train_shape_file ${rl_dir}/${train_set}/${metrics_dir}/pos_idx_shape "
@@ -1226,9 +1231,11 @@ if ! "${skip_eval}"; then
                     # RL data prep substaeg 1
                     _ex_opts+="--sample_data ${sample_data} "
                     _ex_opts+="--samples_num ${samples_num} "
+                    _ex_opts+="--samples_dir_name ${samples_dir_name} "
                 else
                     # RL data prep substaeg 2
-                    _ex_opts+="--data_path_and_name_and_type ${_dir}/samples_tmp/samples_idx.scp,samples,npy "
+                    _ex_opts+="--samples_dir_name ${samples_dir_name} "
+                    _ex_opts+="--data_path_and_name_and_type ${_dir}/${samples_dir_name}_comb/samples_idx.scp,samples,npy "
                 fi
             fi
 
@@ -1266,22 +1273,22 @@ if ! "${skip_eval}"; then
             # 4. Concatenates the output files from each jobs
             if "${prep_rl_data}"; then
                 if "${sample_data}"; then
-                    # rl data preparation substage 1 (generate samples_tmp/samples_*.scp)
-                    mkdir -p "${_dir}"/samples_tmp
+                    # rl data preparation substage 1 (generate ${samples_dir_name}/samples_*.scp)
+                    mkdir -p "${_dir}"/${samples_dir_name}_comb
                     for i in $(seq "${_nj}"); do
-                        cat "${_logdir}/output.${i}/samples_tmp/samples_idx.scp"
-                    done | LC_ALL=C sort -k1 > "${_dir}/samples_tmp/samples_idx.scp"
+                        cat "${_logdir}/output.${i}/${samples_dir_name}_comb/samples_idx.scp"
+                    done | LC_ALL=C sort -k1 > "${_dir}/${samples_dir_name}_comb/samples_idx.scp"
                     for i in $(seq "${_nj}"); do
-                        cat "${_logdir}/output.${i}/samples_tmp/samples_shape"
-                    done | LC_ALL=C sort -k1 > "${_dir}/samples_tmp/samples_shape"
+                        cat "${_logdir}/output.${i}/${samples_dir_name}_comb/samples_shape"
+                    done | LC_ALL=C sort -k1 > "${_dir}/${samples_dir_name}_comb/samples_shape"
                 else
                     # rl data preparation substage 2 (generate samples)
-                    _tgt_path="${rl_dir}/${dset}/raw_samples"
+                    _tgt_path="${rl_dir}/${dset}/raw_samples_pooling/${samples_dir_name}"
                     mkdir -p ${_tgt_path}
                     for i in $(seq "${_nj}"); do
                         while read -r key src_path; do
                             echo "${key} $(pwd)/${src_path}"
-                        done < "${_logdir}/output.${i}/samples/samples_idx.scp"
+                        done < "${_logdir}/output.${i}/${samples_dir_name}/samples_idx.scp"
                     done | LC_ALL=C sort -k1 > "${_tgt_path}/samples_idx.scp"
                     mkdir -p "${_tgt_path}"/wavs
                     for i in $(seq "${_nj}"); do
@@ -1314,6 +1321,10 @@ if ! "${skip_eval}"; then
                     cat "${_logdir}/output.${i}/speech_shape/speech_shape"
                 done | LC_ALL=C sort -k1 > "${_dir}/speech_shape"
                 for i in $(seq "${_nj}"); do
+                    cat "${_logdir}/output.${i}/wav/wav.scp" | \
+                    sed 's|/log/output\.[0-9]*\/wav/|/wav/|' 
+                done | LC_ALL=C sort -k1 > "${_dir}/wav/wav.scp"
+                for i in $(seq "${_nj}"); do
                     mv -u "${_logdir}/output.${i}"/wav/*.wav "${_dir}"/wav
                     rm -rf "${_logdir}/output.${i}"/wav
                 done
@@ -1342,63 +1353,141 @@ if ! "${skip_eval}"; then
     fi
 
     if [ ${stage} -le 9 ] && [ ${stop_stage} -ge 9 ]; then
-        log "Stage 9: Scoring"
+        log "Stage 9: Scoring: SVS scoring"
 
+        if ! "${skip_versa}"; then
+            log "Scoring SVS evaluation via VERSA, using default ${versa_config}. You can visit https://github.com/shinjiwlab/versa?tab=readme-ov-file#list-of-metrics for more supported metrics."
+            for dset in ${test_sets}; do
+                _data="${data_feats}/${dset}"
+                _dir="${svs_exp}/${inference_tag}/${dset}"
+                _score_config=${versa_config}
+
+                _gt_wavscp="${_data}/wav.scp"
+                _gt_token_file="${_data}/${token_file}"
+                _gen_wavscp="${_dir}/wav/wav.scp"
+                _gen_token_scp="${_dir}/norm/feats.scp"
+
+                _eval_dir=${_dir}/scoring/versa_eval
+                mkdir -p ${_eval_dir}
+                _opts=
+
+                _nj=$(( inference_nj < $(wc -l < "${_gen_wavscp}") ? inference_nj : $(wc -l < "${_gen_wavscp}") ))
+
+                _split_files=""
+                for n in $(seq ${_nj}); do
+                    _split_files+="${_eval_dir}/pred.${n} "
+                done
+                utils/split_scp.pl ${_gen_wavscp} ${_split_files}
+
+                if [ -n "${_gt_wavscp}" ]; then
+                    _split_files=""
+                    for n in $(seq ${_nj}); do
+                        _split_files+="${_eval_dir}/gt.${n} "
+                    done
+                    utils/split_scp.pl ${_gt_wavscp} ${_split_files}
+                    _opts+="--gt ${_eval_dir}/gt.JOB"
+                fi
+
+                if ${gpu_inference}; then
+                    _cmd="${cuda_cmd}"
+                    _ngpu=1
+                else
+                    _cmd="${decode_cmd}"
+                    _ngpu=0
+                fi
+
+                echo "cache_folder: ${_eval_dir}/cache"
+
+                ${_cmd} --gpu "${_ngpu}" JOB=1:"${_nj}" "${_eval_dir}"/versa_eval.JOB.log \
+                    python -m versa.bin.scorer \
+                        --pred ${_eval_dir}/pred.JOB \
+                        --score_config ${_score_config} \
+                        --cache_folder ${_eval_dir}/cache \
+                        --gt ${_gt_wavscp} \
+                        --text ${_data}/text \
+                        --use_gpu ${gpu_inference} \
+                        --output_file ${_eval_dir}/result.JOB.txt \
+                        --io soundfile \
+                        ${_opts} 2>&1;
+
+                python pyscripts/utils/aggregate_eval.py \
+                    --logdir ${_eval_dir} \
+                    --scoredir ${_eval_dir} \
+                    --nj ${_nj}
+
+                _log_dir="${_eval_dir}"
+                _count=0
+                for f in "${_log_dir}"/result.*.txt; do
+                    if [ -f "$f" ]; then
+                        c=$(wc -l < "$f")
+                        _count=$(( _count + c ))
+                    fi
+                done
+                echo "sentences: ${_count}" >> "${_eval_dir}/avg_result.txt"
+                ./scripts/utils/show_tts_results.sh ${_dir}
+                log "Finished scoring evaluation, results are in ${_eval_dir}"
+            done
+        fi
+
+        log "Scoring SVS evaluation via singing metrics: token accuracy, semitone ACC, VUV error."
         for dset in ${test_sets}; do
             _data="${data_feats}/${dset}"
-            _gt_wavscp="${_data}/wav.scp"
             _dir="${svs_exp}/${inference_tag}/${dset}"
-            _gen_wavdir="${_dir}/wav"
+
+            _gt_wavscp="${_data}/wav.scp"
             _gt_token_file="${_data}/${token_file}"
+            _gen_wavscp="${_dir}/wav/wav.scp"
+            _gen_wavdir="${_dir}/wav"
             _gen_token_scp="${_dir}/norm/feats.scp"
+
+            _eval_dir=${_dir}/scoring/sing_metrics
 
             # Objective Evaluation - Accuracy
             log "Begin Scoring for token accuracy on ${dset}, results are written under ${_dir}/Accuracy_res"
 
-            mkdir -p "${_dir}/MCD_res"
             ${python} pyscripts/utils/evaluate_token_accuracy.py \
                 ${_gen_token_scp} \
                 ${_gt_token_file} \
                 "${multi_token}" \
-                --outdir "${_dir}/Accuracy_res" \
+                --outdir "${_eval_dir}/Accuracy_res" \
                 --discrete_token_layers ${discrete_token_layers} \
                 --mix_type ${mix_type}
 
             # Objective Evaluation - MCD
-            log "Begin Scoring for MCD metrics on ${dset}, results are written under ${_dir}/MCD_res"
+            # log "Begin Scoring for MCD metrics on ${dset}, results are written under ${_eval_dir}/MCD_res"
 
-            mkdir -p "${_dir}/MCD_res"
-            ${python} pyscripts/utils/evaluate_mcd.py \
-                ${_gen_wavdir} \
-                ${_gt_wavscp} \
-                --outdir "${_dir}/MCD_res"
+            # mkdir -p "${_eval_dir}/MCD_res"
+            # ${python} pyscripts/utils/evaluate_mcd.py \
+            #     ${_gen_wavdir} \
+            #     ${_gt_wavscp} \
+            #     --outdir "${_eval_dir}/MCD_res"
 
             # Objective Evaluation - log-F0 RMSE
-            log "Begin Scoring for F0 related metrics on ${dset}, results are written under ${_dir}/F0_res"
+            # log "Begin Scoring for F0 related metrics on ${dset}, results are written under ${_eval_dir}/F0_res"
 
-            mkdir -p "${_dir}/F0_res"
-            ${python} pyscripts/utils/evaluate_f0.py \
-                ${_gen_wavdir} \
-                ${_gt_wavscp} \
-                --outdir "${_dir}/F0_res"
+            # mkdir -p "${_eval_dir}/F0_res"
+            # ${python} pyscripts/utils/evaluate_f0.py \
+            #     ${_gen_wavdir} \
+            #     ${_gt_wavscp} \
+            #     --outdir "${_eval_dir}/F0_res"
 
             # Objective Evaluation - semitone ACC
-            log "Begin Scoring for SEMITONE related metrics on ${dset}, results are written under ${_dir}/SEMITONE_res"
+            log "Begin Scoring for SEMITONE related metrics on ${dset}, results are written under ${_eval_dir}/SEMITONE_res"
 
-            mkdir -p "${_dir}/SEMITONE_res"
+            mkdir -p "${_eval_dir}/SEMITONE_res"
             ${python} pyscripts/utils/evaluate_semitone.py \
                 ${_gen_wavdir} \
                 ${_gt_wavscp} \
-                --outdir "${_dir}/SEMITONE_res"
+                --outdir "${_eval_dir}/SEMITONE_res"
 
              # Objective Evaluation - VUV error
-            log "Begin Scoring for VUV related metrics on ${dset}, results are written under ${_dir}/VUV_res"
+            log "Begin Scoring for VUV related metrics on ${dset}, results are written under ${_eval_dir}/VUV_res"
 
-            mkdir -p "${_dir}/VUV_res"
+            mkdir -p "${_eval_dir}/VUV_res"
             ${python} pyscripts/utils/evaluate_vuv.py \
                 ${_gen_wavdir} \
                 ${_gt_wavscp} \
-                --outdir "${_dir}/VUV_res"
+                --outdir "${_eval_dir}/VUV_res"
 
         done
     fi
