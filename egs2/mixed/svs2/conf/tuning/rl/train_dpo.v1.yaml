@@ -90,7 +90,7 @@ num_iters_per_epoch: 5000    # number of iterations per epoch
 max_epoch: 8
 grad_clip: 50.0              # gradient clipping norm
 grad_noise: false           # whether to use gradient noise injection
-accum_grad: 100               # gradient accumulation
+accum_grad: 100.0               # gradient accumulation
 
 batch_type: sorted
 batch_size: 32

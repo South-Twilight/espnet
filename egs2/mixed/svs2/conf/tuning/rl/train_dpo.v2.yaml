@@ -88,12 +88,12 @@ optim_conf:
 ##########################################################
 num_iters_per_epoch: 5000    # number of iterations per epoch
 max_epoch: 8
-grad_clip: 50              # gradient clipping norm
+grad_clip: 50.0              # gradient clipping norm
 grad_noise: false           # whether to use gradient noise injection
-accum_grad: 100               # gradient accumulation
+accum_grad: 100.0               # gradient accumulation
 
 batch_type: sorted
-batch_size: 64
+batch_size: 32
 
 sort_in_batch: descending   # how to sort data in making batch
 sort_batch: descending      # how to sort created batches
@@ -110,3 +110,4 @@ best_model_criterion:
 -   - train
     - loss
     - min
+
