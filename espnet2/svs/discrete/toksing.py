@@ -497,6 +497,7 @@ class TokSing(AbsSVS):
         sep = False
         self.sep = sep
         if decoder_type == "transformer":
+            # seperate decoder for each discrete token layer
             if self.discrete_token_layers > 1 and self.sep:
                 self.decoder = torch.nn.ModuleList(
                     [
@@ -802,13 +803,13 @@ class TokSing(AbsSVS):
 
         if self.predict_pitch:
             # NOTE(Yuxun): if using RL, infer mode will be used.
+            # `discrete_token_lengths_frame` will be used to sync lengths in inference.
             if not flag_RL:
                 hs_pitch_in = self.proj_pitch(midi_emb)
                 hs_pitch = self.length_regulator(hs_pitch_in, ds)
                 log_f0_outs, _ = self.f0_predictor(
                     (hs + hs_pitch).transpose(1, 2), discrete_token_lengths_frame
                 )
-                # log_f0_outs, _ = self.f0_predictor(hs.transpose(1, 2), discrete_token_lengths_frame)
                 log_f0_outs = log_f0_outs.transpose(1, 2)
                 log_f0_outs = torch.max(
                     log_f0_outs, torch.zeros_like(log_f0_outs).to(log_f0_outs)
@@ -818,7 +819,9 @@ class TokSing(AbsSVS):
                 hs_pitch_in = self.proj_pitch(midi_emb)
                 hs_pitch = self.length_regulator(hs_pitch_in, d_outs_int)
                 # NOTE(Yuxun): sync lengths with lengths of inference feats
-                discrete_token_lengths_frame = torch.Tensor([hs.size(1)]).to(hs.device).to(dtype=torch.long)
+                discrete_token_lengths_frame = torch.sum(
+                    d_outs_int, dim=1
+                ).to(hs.device).to(dtype=torch.long)
                 log_f0_outs, _ = self.f0_predictor(
                     (hs + hs_pitch).transpose(1, 2),
                     discrete_token_lengths_frame
@@ -848,7 +851,6 @@ class TokSing(AbsSVS):
         if self.discrete_token_layers > 1 and self.sep:
             before_outs = []
             for i in range(self.discrete_token_layers):
-                # print(hs.device, h_masks.device, self.decoder[i].device, flush=True)
                 zs, _ = self.decoder[i](hs, h_masks)
                 before_outs_ = self.linear_projection[i](zs).view(
                     zs.size(0), -1, self.odim
@@ -861,14 +863,14 @@ class TokSing(AbsSVS):
             )
         else:
             zs, _ = self.decoder(hs, h_masks)  # (B, T_feats, adim)
-            # (B. T_feats, odim), (B. T_feats, 1), (B. T_feats, 1)
             before_outs = self.linear_projection(zs).view(
                 zs.size(0), -1, self.odim
             )  # (B, T_feats * layers, nclusters)
-        # if self.loss_function == "XiaoiceSing2" or self.use_discrete_token:
-        #    log_f0_outs = self.pitch_predictor(zs).view(
-        #        zs.size(0), -1, 1
-        #    )  # (B, T_feats, odim)
+        
+        # decoder output mask
+        o_masks = make_pad_mask(olens * self.discrete_token_layers).to(olens.device)
+        before_outs = before_outs.masked_fill(o_masks.unsqueeze(-1), 0.0)
+
         if self.loss_function == "XiaoiceSing2":
             vuv_outs = self.vuv_predictor(zs).view(
                 zs.size(0), -1, 1
@@ -883,9 +885,7 @@ class TokSing(AbsSVS):
             ).transpose(1, 2)
 
         if self.discrete_postnet_layers != 0:
-            # print(after_outs.shape, flush=True)
             pred_token = torch.argmax(after_outs, dim=2)
-            # print(pred_token.shape, flush=True)
             if self.discrete_token_layers == 1:
                 token_emb = self.token_emb(pred_token)
             else:
@@ -894,17 +894,16 @@ class TokSing(AbsSVS):
                     token_emb = token_emb + self.token_emb[i](
                         pred_token[:, i :: self.discrete_token_layers, :]
                     )
-            # print(token_emb.shape, flush=True)
             dpos_masks = self._source_mask(olens_in)
             after_outs, _ = self.discrete_postnet(token_emb, dpos_masks)
             after_outs = self.dpos_linear_projection(after_outs)
-            # print(after_outs.shape, flush=True)
 
+        # Loss Calculation
         if flag_RL:
             # NOTE(Yuxun): Length of feats, pitch in inference will be different with gt ones.
-            loss = torch.tensor(0).to(after_outs.device)
+            after_outs = after_outs.masked_fill(o_masks.unsqueeze(-1), 0.0)
             stats = dict(
-                loss=loss,
+                loss=torch.tensor(0).to(after_outs.device),
             )
         else:
             # modifiy mod part of groundtruth
@@ -1011,7 +1010,7 @@ class TokSing(AbsSVS):
             if flag_IsValid:
                 return loss, stats, weight, after_outs[:, : olens.max()], ys, olens
             elif flag_RL:
-                return loss, stats, weight, after_outs
+                return loss, stats, weight, dict(feat_gen=after_outs, feat_length=olens, pitch=log_f0_outs)
             else:
                 return loss, stats, weight
 
@@ -1102,7 +1101,6 @@ class TokSing(AbsSVS):
                 (hs + hs_pitch).transpose(1, 2),
                 torch.Tensor([hs.size(1)]).to(hs.device).to(dtype=torch.long),
             )
-            # log_f0_outs, _ = self.f0_predictor(hs.transpose(1, 2), torch.Tensor([hs.size(1)]).to(hs.device).to(dtype=torch.long))
             log_f0_outs = log_f0_outs.transpose(1, 2)
             log_f0_outs = torch.max(
                 log_f0_outs, torch.zeros_like(log_f0_outs).to(log_f0_outs)
@@ -1153,14 +1151,6 @@ class TokSing(AbsSVS):
 
         if self.use_discrete_token:
             # after_outs input as [B, T, V]
-
-            token_prob = torch.sigmoid(after_outs)
-            token_prob = token_prob / token_prob.sum(dim=-1, keepdim=True)
-            # Case 1. sample tokens from distribution
-            # V = token_prob.size(2)
-            # sample_token = torch.multinomial(token_prob.view(-1, V), 1, replacement=True)
-            # sample_token = sample_token.view(1, -1, 1) # [B=1, T, S]
-            # Case 2. sample
             logits = after_outs
             after_outs = torch.argmax(after_outs, dim=2).unsqueeze(2)
             # if self.codec_codebook > 0:

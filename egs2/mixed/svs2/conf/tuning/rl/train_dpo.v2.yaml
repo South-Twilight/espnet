@@ -13,11 +13,12 @@ model_conf:
         "midi_encode_layer",
         "duration_encode_layer",
         "encoder",
-        "f0_predictor",
-        "duration_predictor",
         "sid_emb",
         "lid_emb",
         "projection",
+        "f0_predictor",
+        "lf0_mapping",
+        "duration_predictor",
     ]
 
 svs: toksing           # model architecture
@@ -78,7 +79,7 @@ pitch_normalize: None  # normalizer for the pitch feature
 ##########################################################
 optim: adamw
 optim_conf:
-    lr: 1.0e-05
+    lr: 3.0e-03
     betas:
         - 0.9
         - 0.95
@@ -87,13 +88,14 @@ optim_conf:
 #                OTHER TRAINING SETTING                  #
 ##########################################################
 num_iters_per_epoch: 5000    # number of iterations per epoch
-max_epoch: 8
+max_epoch: 1
 grad_clip: 50.0              # gradient clipping norm
 grad_noise: false           # whether to use gradient noise injection
 accum_grad: 100.0               # gradient accumulation
 
 batch_type: sorted
-batch_size: 32
+batch_size: 16
+drop_last_iter: true
 
 sort_in_batch: descending   # how to sort data in making batch
 sort_batch: descending      # how to sort created batches

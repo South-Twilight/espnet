@@ -127,9 +127,10 @@ download_model=""   # Download a model from Model Zoo and use it for decoding.
 
 # RL related
 prep_rl_data=false
-sample_data=false
 samples_num=10
 samples_dir_name="samples_${samples_num}"
+gen_wavs=false
+temperature=1.0
 train_rl=false
 rl_dir=${dumpdir}/"rl"
 rl_metrics="mcd"
@@ -1225,17 +1226,12 @@ if ! "${skip_eval}"; then
             _opts+="--mix_type ${mix_type} "
 
             # Add RL config
-            _ex_opts+="--prep_rl_data ${prep_rl_data} "
             if "${prep_rl_data}"; then
-                if "${sample_data}"; then
-                    # RL data prep substaeg 1
-                    _ex_opts+="--sample_data ${sample_data} "
-                    _ex_opts+="--samples_num ${samples_num} "
-                    _ex_opts+="--samples_dir_name ${samples_dir_name} "
-                else
-                    # RL data prep substaeg 2
-                    _ex_opts+="--samples_dir_name ${samples_dir_name} "
-                    _ex_opts+="--data_path_and_name_and_type ${_dir}/${samples_dir_name}_comb/samples_idx.scp,samples,npy "
+                _ex_opts+="--samples_num ${samples_num} "
+                _ex_opts+="--samples_dir_name ${samples_dir_name} "
+                _ex_opts+="--temperature ${temperature} "
+                if "${gen_wavs}"; then
+                    _ex_opts+="--gen_wavs ${gen_wavs} "
                 fi
             fi
 
@@ -1252,44 +1248,38 @@ if ! "${skip_eval}"; then
             # shellcheck disable=SC2086
             utils/split_scp.pl "${key_file}" ${split_scps}
 
-            # 3. Submit decoding jobs
-            log "Decoding started... log: '${_logdir}/svs_inference.*.log'"
-            # shellcheck disable=SC2086
-            ${_cmd} --gpu "${_ngpu}" JOB=1:"${_nj}" "${_logdir}"/svs_inference.JOB.log \
-                ${python} -m espnet2.bin.svs_inference \
-                    --ngpu "${_ngpu}" \
-                    --data_path_and_name_and_type "${_data}/text,text,text" \
-                    --data_path_and_name_and_type "${_data}/label,label,duration" \
-                    --data_path_and_name_and_type "${_data}/score.scp,score,score" \
-                    --data_path_and_name_and_type "${_data}/${_scp},singing,${_type}" \
-                    --data_path_and_name_and_type "${_data}/${token_file},discrete_token,text_int" \
-                    --key_file "${_logdir}"/keys.JOB.scp \
-                    --model_file "${svs_exp}"/"${inference_model}" \
-                    --train_config "${svs_exp}"/config.yaml \
-                    --output_dir "${_logdir}"/output.JOB \
-                    --vocoder_checkpoint "${vocoder_file}" \
-                    ${_opts} ${_ex_opts} ${inference_args}
-
-            # 4. Concatenates the output files from each jobs
             if "${prep_rl_data}"; then
-                if "${sample_data}"; then
-                    # rl data preparation substage 1 (generate ${samples_dir_name}/samples_*.scp)
-                    mkdir -p "${_dir}"/${samples_dir_name}_comb
-                    for i in $(seq "${_nj}"); do
-                        cat "${_logdir}/output.${i}/${samples_dir_name}_comb/samples_idx.scp"
-                    done | LC_ALL=C sort -k1 > "${_dir}/${samples_dir_name}_comb/samples_idx.scp"
-                    for i in $(seq "${_nj}"); do
-                        cat "${_logdir}/output.${i}/${samples_dir_name}_comb/samples_shape"
-                    done | LC_ALL=C sort -k1 > "${_dir}/${samples_dir_name}_comb/samples_shape"
-                else
-                    # rl data preparation substage 2 (generate samples)
-                    _tgt_path="${rl_dir}/${dset}/raw_samples_pooling/${samples_dir_name}"
-                    mkdir -p ${_tgt_path}
-                    for i in $(seq "${_nj}"); do
-                        while read -r key src_path; do
-                            echo "${key} $(pwd)/${src_path}"
-                        done < "${_logdir}/output.${i}/${samples_dir_name}/samples_idx.scp"
-                    done | LC_ALL=C sort -k1 > "${_tgt_path}/samples_idx.scp"
+                # 3. Submit decoding jobs
+                log "Decoding started... log: '${_logdir}/generate_samples.*.log'"
+                # shellcheck disable=SC2086
+                ${_cmd} --gpu "${_ngpu}" JOB=1:"${_nj}" "${_logdir}"/generate_samples.JOB.log \
+                    ${python} -m pyscripts.utils.generate_samples \
+                        --ngpu "${_ngpu}" \
+                        --data_path_and_name_and_type "${_data}/text,text,text" \
+                        --data_path_and_name_and_type "${_data}/label,label,duration" \
+                        --data_path_and_name_and_type "${_data}/score.scp,score,score" \
+                        --data_path_and_name_and_type "${_data}/${_scp},singing,${_type}" \
+                        --data_path_and_name_and_type "${_data}/${token_file},discrete_token,text_int" \
+                        --key_file "${_logdir}"/keys.JOB.scp \
+                        --model_file "${svs_exp}"/"${inference_model}" \
+                        --train_config "${svs_exp}"/config.yaml \
+                        --output_dir "${_logdir}"/output.JOB \
+                        --vocoder_checkpoint "${vocoder_file}" \
+                        ${_opts} ${_ex_opts} ${inference_args}
+
+                _tgt_path="${rl_dir}/${dset}/raw_samples_pooling/${samples_dir_name}"
+                mkdir -p ${_tgt_path}
+                for i in $(seq "${_nj}"); do
+                    while read -r key src_path; do
+                        echo "${key} $(pwd)/${src_path}"
+                    done < "${_logdir}/output.${i}/${samples_dir_name}/samples_idx.scp"                        
+                done | LC_ALL=C sort -k1 > "${_tgt_path}/samples_idx.scp"
+                
+                for i in $(seq "${_nj}"); do
+                    cat "${_logdir}/output.${i}/${samples_dir_name}/samples_shape"
+                done | LC_ALL=C sort -k1 > "${_tgt_path}/samples_shape"
+
+                if "${gen_wavs}"; then
                     mkdir -p "${_tgt_path}"/wavs
                     for i in $(seq "${_nj}"); do
                         while read -r key src_wav; do
@@ -1299,15 +1289,34 @@ if ! "${skip_eval}"; then
                                 mv "${src_wav}" "${tgt_wav}"
                             fi
                             echo "${key} ${tgt_wav}"
-                        done < "${_logdir}/output.${i}/wav/wav.scp"
+                        done < "${_logdir}/output.${i}/${samples_dir_name}/wav.scp"
                     done | LC_ALL=C sort -k1 > "${_tgt_path}/wav.scp"
-                    # for i in $(seq "${_nj}"); do
-                    #     rm -rf "${_logdir}/output.${i}"/wav
-                    # done
                 fi
+                # for i in $(seq "${_nj}"); do
+                #     rm -rf "${_logdir}/output.${i}"/wav
+                # done
             else
+                # 3. Submit decoding jobs
+                log "Decoding started... log: '${_logdir}/svs_inference.*.log'"
+                # shellcheck disable=SC2086
+                ${_cmd} --gpu "${_ngpu}" JOB=1:"${_nj}" "${_logdir}"/svs_inference.JOB.log \
+                    ${python} -m espnet2.bin.svs_inference \
+                        --ngpu "${_ngpu}" \
+                        --data_path_and_name_and_type "${_data}/text,text,text" \
+                        --data_path_and_name_and_type "${_data}/label,label,duration" \
+                        --data_path_and_name_and_type "${_data}/score.scp,score,score" \
+                        --data_path_and_name_and_type "${_data}/${_scp},singing,${_type}" \
+                        --data_path_and_name_and_type "${_data}/${token_file},discrete_token,text_int" \
+                        --key_file "${_logdir}"/keys.JOB.scp \
+                        --model_file "${svs_exp}"/"${inference_model}" \
+                        --train_config "${svs_exp}"/config.yaml \
+                        --output_dir "${_logdir}"/output.JOB \
+                        --vocoder_checkpoint "${vocoder_file}" \
+                        ${_opts} ${_ex_opts} ${inference_args}
+
                 mkdir -p "${_dir}"/{norm,denorm,wav}
 
+                # 4. Concatenates the output files from each jobs
                 if [ ${svs_task} == svs ]; then
                     for i in $(seq "${_nj}"); do
                         cat "${_logdir}/output.${i}/norm/feats.scp"
@@ -1396,13 +1405,11 @@ if ! "${skip_eval}"; then
                     _ngpu=0
                 fi
 
-                echo "cache_folder: ${_eval_dir}/cache"
 
                 ${_cmd} --gpu "${_ngpu}" JOB=1:"${_nj}" "${_eval_dir}"/versa_eval.JOB.log \
                     python -m versa.bin.scorer \
                         --pred ${_eval_dir}/pred.JOB \
                         --score_config ${_score_config} \
-                        --cache_folder ${_eval_dir}/cache \
                         --gt ${_gt_wavscp} \
                         --text ${_data}/text \
                         --use_gpu ${gpu_inference} \

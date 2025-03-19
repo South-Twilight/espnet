@@ -157,6 +157,12 @@ def process_utterance(
     keep = segment["is_slur"]
     spk = name.split("#")[0]
 
+    for i in range(len(phns)):
+        if phns[i] == "<AP>":
+            phns[i] = "AP"
+        if phns[i] == "<SP>":
+            phns[i] = "SP"
+
     # load tempo from midi
     uid = name.encode("unicode_escape").decode().replace("\\u", "#U")
     # NOTE(Yuxun): Please check directory name in m4singer
@@ -186,10 +192,6 @@ def process_utterance(
     assert len(phn_dur) == len(phns)
     label_entry = []
     for i in range(len(phns)):
-        if phns[i] == "<AP>":
-            phns[i] = "AP"
-        if phns[i] == "<SP>":
-            phns[i] = "SP"
         start = running_dur
         end = running_dur + phn_dur[i]
         label_entry.append("{:.3f} {:.3f} {}".format(start, end, phns[i]))

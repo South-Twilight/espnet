@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Script to run the inference of singing-voice-synthesis model."""
+"""Script to generate samples for reinforcement learning. (Based on svs_inference.py)"""
 
 import os
 import argparse
@@ -32,65 +32,6 @@ from espnet.utils.cli_utils import get_commandline_args
 
 
 class SingingGenerate:
-    """SingingGenerate class
-
-    Examples:
-        Example 1: SVS
-        >>> import soundfile
-        >>> import numpy as np
-        >>> svs = svs = SingingGenerate(
-        ...     "config.yaml", "model.pth", vocoder_checkpoint="vocoder.pkl"
-        ... )
-        >>> batch = {
-        ...     "score": (
-        ...         75,  # tempo
-        ...         [
-        ...             (0.0, 0.25, "r_en", 63.0, "r_en"),
-        ...             (0.25, 0.5, "—", 63.0, "en"),
-        ...         ],
-        ...     ),
-        ...     "text": "r en en",
-        ...     "label": (
-        ...         np.array(
-        ...             [
-        ...                 [0.0, 0.125],
-        ...                 [0.125, 0.25],
-        ...                 [0.25, 0.375],
-        ...             ]
-        ...         ),
-        ...         ["r", "en", "en"],
-        ...     ),
-        ... }
-        >>> output_dict = svs(batch)
-        >>> soundfile.write("out.wav", output_dict["wav"].numpy(), svs.fs, "PCM_16")
-
-        Example 2: GAN SVS
-        >>> import soundfile
-        >>> import numpy as np
-        >>> svs = SingingGenerate("config.yaml", "model.pth")
-        >>> batch = {
-        ...     "score": (
-        ...         75,  # tempo
-        ...         [
-        ...             (0.0, 0.25, "r_en", 63.0, "r_en"),
-        ...             (0.25, 0.5, "—", 63.0, "en"),
-        ...         ],
-        ...     ),
-        ...     "text": "r en en",
-        ...     "label": (
-        ...         np.array(
-        ...             [
-        ...                 [0.0, 0.125],
-        ...                 [0.125, 0.25],
-        ...                 [0.25, 0.375],
-        ...             ]
-        ...         ),
-        ...         ["r", "en", "en"],
-        ...     ),
-        ... }
-        >>> output_dict = svs(batch, sids=np.array([1]))
-        >>> soundfile.write("out_gan.wav", output_dict["wav"].numpy(), svs.fs, "PCM_16")
-    """
 
     @typechecked
     def __init__(
@@ -118,7 +59,8 @@ class SingingGenerate:
         always_fix_seed: bool = False,
         prefer_normalized_feats: bool = False,
         svs_task: str = "svs",
-        sample_data: bool = False,
+        gen_wavs: bool = False,
+        sample_strategy: str = "TopBottomK"
     ):
         """Initialize SingingGenerate module."""
 
@@ -150,7 +92,7 @@ class SingingGenerate:
         self.prefer_normalized_feats = prefer_normalized_feats
         self.discrete_token_layers = discrete_token_layers
         self.mix_type = mix_type
-        self.sample_data = sample_data
+        self.gen_wavs = gen_wavs
         if vocoder_checkpoint is not None:
             vocoder = SVSTaskClass.build_vocoder_from_file(
                 vocoder_config, vocoder_checkpoint, model, device
@@ -189,7 +131,7 @@ class SingingGenerate:
     @typechecked
     def __call__(
         self,
-        text,
+        text: Union[torch.Tensor, np.ndarray],
         text_lengths: Union[torch.Tensor, np.ndarray, None] = None,
         singing: Union[torch.Tensor, np.ndarray, None] = None,
         singing_lengths: Union[torch.Tensor, np.ndarray, None] = None,
@@ -230,57 +172,39 @@ class SingingGenerate:
         if self.use_spembs and spembs is None:
             raise RuntimeError("Missing required argument: 'spembs'")
 
-        # prepare batch
-        if isinstance(text, Dict):
-            # dataset infer: text = dict(label=text["label"], score=text["score"]) 
-            # music score infer: text = dict(text=text["text"], score=text["score"]) 
-            infer_data = dict(score=text["score"])
-            if "label" in text:
-                infer_data["label"] = text["label"]
-            else:
-                infer_data["text"] = text["text"]
-            data = self.preprocess_fn(
-                "<dummy>", infer_data
-            )
-            label = data["label"]
-            midi = data["midi"]
-            duration_phn = data["duration_phn"]
-            duration_ruled_phn = data["duration_ruled_phn"]
-            duration_syb = data["duration_syb"]
-            phn_cnt = data["phn_cnt"]
-            slur = data["slur"]
-            batch = dict(text=data["label"])
-        else:
-            batch = dict(text=text)
+        batch = dict(
+            text=text,
+            text_lengths=text_lengths,
+        )
 
         if singing is not None:
             batch.update(singing=singing)
-            batch.update(singing_length=singing_lengths)
+            batch.update(singing_lengths=singing_lengths)
         if label is not None:
             batch.update(label=label)
-            batch.update(label_length=label_lengths)
+            batch.update(label_lengths=label_lengths)
         if midi is not None:
             batch.update(midi=midi)
-            batch.update(midi_length=midi_lengths)
+            batch.update(midi_lengths=midi_lengths)
         if duration_phn is not None:
             batch.update(duration_phn=duration_phn)
-            batch.update(duration_phn_length=duration_phn_lengths)
+            batch.update(duration_phn_lengths=duration_phn_lengths)
         if duration_ruled_phn is not None:
             batch.update(duration_ruled_phn=duration_ruled_phn)
-            batch.update(duration_ruled_phn_length=duration_ruled_phn_lengths)
+            batch.update(duration_ruled_phn_lengths=duration_ruled_phn_lengths)
         if duration_syb is not None:
             batch.update(duration_syb=duration_syb)
-            batch.update(duration_syb_length=duration_syb_lengths)
+            batch.update(duration_syb_lengths=duration_syb_lengths)
         if pitch is not None:
             batch.update(pitch=pitch)
-            batch.update(pitch_length=pitch_lengths)
+            batch.update(pitch_lengths=pitch_lengths)
         if phn_cnt is not None:
             batch.update(phn_cnt=phn_cnt)
         if slur is not None:
             batch.update(slur=slur)
-            batch.update(slur_length=slur_lengths)
+            batch.update(slur_lengths=slur_lengths)
         if energy is not None:
-            batch.update(energy_length=energy_lengths)
+            batch.update(energy_lengths=energy_lengths)
         if spembs is not None:
             batch.update(spembs=spembs)
         if sids is not None:
@@ -293,50 +217,48 @@ class SingingGenerate:
         batch = to_device(batch, self.device)
 
         with torch.no_grad():
-            _, _, _, tokens = self.model(**batch, flag_RL=True)
-            logging.info(f'tokens: {tokens.shape}')
+            _, _, _, output_dict = self.model(**batch, flag_RL=True)
 
-        if self.sample_data:
-            # prepare data for RL
-            pass
-        else:
-            if output_dict.get("att_w") is not None:
-                duration, focus_rate = self.duration_calculator(output_dict["att_w"])
-                output_dict.update(duration=duration, focus_rate=focus_rate)
-            else:
-                output_dict.update(duration=None, focus_rate=None)
-
+        logits_b = output_dict["feat_gen"]
+        f0_b = output_dict["pitch"]
+        feat_lengths = output_dict["feat_length"]
+        bs = logits_b.size(0)
+        samples_num = kwargs["samples_num"]
+        output_dict["tokens_list"] = []
+        output_dict["wavs_list"] = []
+        for i in range(bs):
+            logits = logits_b[i][: feat_lengths[i] * self.discrete_token_layers, :]
+            f0 = f0_b[i][: feat_lengths[i], :]
+            assert f0.size(0) * self.discrete_token_layers == logits.size(0), """
+                Mismatch between logits({logits.shape}) and f0({f0.shape}) in {key}.
+            """
+            # sampled tokens
+            if "temperature" in kwargs:
+                logits = logits / kwargs["temperature"]
+            token_prob = torch.softmax(logits, dim=-1)
+            token_sampled = torch.multinomial(token_prob, samples_num, replacement=True)
+            output_dict["tokens_list"].append(token_sampled)
             # apply vocoder (mel-to-wav)
-            if self.vocoder is not None:
-                if (
-                    self.prefer_normalized_feats
-                    or output_dict.get("feat_gen_denorm") is None
-                ):
-                    input_feat = output_dict["feat_gen"]
-                else:
-                    input_feat = output_dict["feat_gen_denorm"]
+            if self.gen_wavs:
+                wavs = []
+                for j in range(samples_num):
+                    token_idx = token_sampled[:, j]
+                    if self.vocoder is not None:
+                        if self.discrete_token_layers > 1:
+                            # NOTE(Yuxun): vocoder can only accept 'frame' type, [T, L]
+                            if self.mix_type == "frame":
+                                input_feat = token_idx.view(-1, self.discrete_token_layers)
+                            elif self.mix_type == "sequence":
+                                input_feat = token_idx.view(
+                                    self.discrete_token_layers, -1
+                                ).transpose(0, 1)
 
-                if kwargs.get("samples", None) is not None:
-                    input_feat = kwargs["samples"].to(self.device)
-
-                logging.info(f"type: {self.mix_type}")
-                logging.info(f"layer: {self.discrete_token_layers}")
-                if self.discrete_token_layers > 1:
-                    # NOTE(Yuxun): vocoder can only accept 'frame' type, [T, L]
-                    if self.mix_type == "frame":
-                        input_feat = input_feat.view(-1, self.discrete_token_layers)
-                    elif self.mix_type == "sequence":
-                        input_feat = input_feat.view(
-                            self.discrete_token_layers, -1
-                        ).transpose(0, 1)
-
-                if "pitch" in output_dict and output_dict["pitch"] is not None:
-                    assert len(output_dict["pitch"].shape) == 1, "pitch shape must be (T,)."
-                    wav = self.vocoder(input_feat, output_dict["pitch"])
-                else:
-                    # print("VOC",input_feat)
-                    wav = self.vocoder(input_feat)
-                output_dict.update(wav=wav)
+                            wav = self.vocoder(input_feat, f0.squeeze(1))
+                            wavs.append(wav)
+                output_dict["wavs_list"].append(wavs)
+        
+        output_dict.pop("feat_gen")
+        output_dict.pop("pitch")
 
         return output_dict
 
@@ -458,10 +380,10 @@ def inference(
     mix_type: str = "frame",
     svs_task: Optional[str] = "svs",
     # rl related
-    prep_rl_data: bool = False,
-    sample_data: bool = False,
     samples_num: int = 1,
     samples_dir_name: Optional[str] = "samples",
+    gen_wavs: bool = False,
+    temperature: float = 30.,
 ):
     """Perform SVS model decoding."""
     if ngpu > 1:
@@ -493,7 +415,7 @@ def inference(
         dtype=dtype,
         device=device,
         svs_task=svs_task,
-        sample_data=sample_data,
+        gen_wavs=gen_wavs,
     )
 
     # 3. Build data-iterator
@@ -511,7 +433,13 @@ def inference(
 
     # 4. Start for-loop
     output_dir = Path(output_dir)
-    (output_dir / "wav").mkdir(parents=True, exist_ok=True)
+    (output_dir / f"{samples_dir_name}" / "samples").mkdir(parents=True, exist_ok=True)
+    sample_writer = NpyScpWriter(output_dir / f"{samples_dir_name}"/ "samples", output_dir / f"{samples_dir_name}" / "samples_idx.scp")
+    sample_shape_writer = open(output_dir / f"{samples_dir_name}" / "samples_shape", "w")
+
+    if gen_wavs:
+        (output_dir / samples_dir_name / "wav").mkdir(parents=True, exist_ok=True)
+        wav_writer = open(output_dir / samples_dir_name / "wav.scp", "w")
 
     # Lazy load to avoid the backend error
     import matplotlib
@@ -520,204 +448,45 @@ def inference(
     import matplotlib.pyplot as plt
     from matplotlib.ticker import MaxNLocator
 
-    with  open(
-        output_dir / "wav" / "wav.scp", "w"
-    )as wavscp_writer:
+    for idx, (keys, batch) in enumerate(loader, 1):
+        assert isinstance(batch, dict), type(batch)
+        assert all(isinstance(s, str) for s in keys), keys
+        _bs = len(next(iter(batch.values())))
+
+        logging.info(f"keys: {keys}")
+
+        start_time = time.perf_counter()
+        output_dict = singingGenerate(**batch, samples_num=samples_num, temperature=temperature)
+        logging.info(f"output_dict: {output_dict.keys()}")
+
         # RL data prep substage 1: get sample idx
-        if sample_data:
-            (output_dir / f"{samples_dir_name}_comb").mkdir(parents=True, exist_ok=True)
-            (output_dir / f"{samples_dir_name}").mkdir(parents=True, exist_ok=True)
-            sample_comb_writer = NpyScpWriter(output_dir / f"{samples_dir_name}_comb", output_dir / f"{samples_dir_name}_comb" / "samples_idx.scp")
-            sample_comb_shape_writer = open(output_dir / f"{samples_dir_name}_comb" / "samples_shape", "w")
-            sample_writer = NpyScpWriter(output_dir / f"{samples_dir_name}", output_dir / f"{samples_dir_name}" / "samples_idx.scp")
-
-        # RL data prep substage 2: generate wav with coreresponding sample idx
-        if prep_rl_data and not sample_data:
-            (output_dir / "wav").mkdir(parents=True, exist_ok=True)
-            wav_writer = open(output_dir / "wav" / "wav.scp", "w")
-
-        for idx, (keys, batch) in enumerate(loader, 1):
-            logging.info(f'keys: {keys}')
-            assert isinstance(batch, dict), type(batch)
-            assert all(isinstance(s, str) for s in keys), keys
-            _bs = len(next(iter(batch.values())))
-
-            # logging.info(f"batch: {batch}")
-            for b_k, b_v in batch.items():
-                logging.info(f"{b_k} ({b_v.shape}): {b_v}")
-            logging.info(f"process keys: {keys}")
-
-            key = keys[0]
-
-            # RL data prep substage 2: generate wav with coreresponding sample idx
-            if "samples" in batch:
-                samples = batch["samples"]
-                samples_list = []
-                wav_list = []
-                total_sample = samples.shape[-1]
-                for i in range(total_sample):
-                    samples_idx = samples[:, i]
-                    batch.update(samples=samples_idx)
-                    samples_list.append(samples_idx)
-                    output_dict = singingGenerate(**batch)
-                    wav_list.append(output_dict["wav"])
-                for id_num, (sample_idx, sample_wav) in enumerate(zip(samples_list, wav_list)):
-                    uid = key + "_" + str(id_num)
+        if output_dict.get("tokens_list"):
+            for i in range(_bs):
+                key = keys[i]
+                logits = output_dict["tokens_list"][i]
+                for j in range(samples_num):
+                    sample_idx = logits[:, j]
+                    uid = key + "_" + str(j)
+                    sample_writer[uid] = sample_idx.cpu().numpy()
+                    sample_shape_writer.write(
+                        f"{uid} " + ",".join(map(str, sample_idx.shape)) + "\n"
+                    )
+        
+        # RL data prep substage 2 [Optional]: get wavs
+        if output_dict.get("wavs_list") and gen_wavs:
+            for i in range(_bs):
+                key = keys[i]
+                wavs_sample_list = output_dict["wavs_list"][i]
+                for j in range(samples_num):
+                    wav = wavs_sample_list[j]
+                    uid = key + "_" + str(j)
                     sf.write(
-                        output_dir / "wav" / f"{uid}.wav",
-                        sample_wav.cpu().numpy(),
+                        f"{output_dir}/{samples_dir_name}/wav/{uid}.wav",
+                        wav.cpu().numpy(),
                         singingGenerate.fs,
                         "PCM_16",
                     )
-                    wav_writer.write("{} {}\n".format(uid, os.path.abspath(output_dir / "wav" / f"{uid}.wav")))
-
-                # clear output dict
-                output_dict = {}
-            else:
-                start_time = time.perf_counter()
-                logging.info(f'text: {batch["text"].dtype}')
-                output_dict = singingGenerate(batch)
-            
-            # RL data prep substage 2: generate wav with coreresponding sample idx
-            if len(output_dict) == 0:
-                continue
-
-            # RL data prep substage 1: get sample idx
-            if output_dict.get("logits") is not None and sample_data:
-                logits = output_dict["logits"][0]
-                f0 = output_dict["pitch"]
-                assert f0.size(0) * discrete_token_layers == logits.size(0), f"Mismatch between logits({logits.shape}) and f0({f0.shape}) in {key}."
-                token_prob = torch.softmax(logits, dim=-1)
-                # [T, V]
-                token_sampled = torch.multinomial(token_prob, samples_num, replacement=True)
-                logging.info(f"{key}: {token_sampled.shape}")
-                # sample_comb: [T, samples]
-                sample_comb_writer[key] = token_sampled.cpu().numpy()
-                sample_comb_shape_writer.write(
-                    f"{key} " + ",".join(map(str, token_sampled.shape)) + "\n"
-                )
-                logging.info(f'write sampled tokens with shape {token_sampled.shape}')
-                # sample: [T] * samples
-                total_sample_num = token_sampled.shape[-1]
-                for i in range(total_sample_num):
-                    sample_idx = token_sampled[:, i]
-                    uid = key + "_" + str(i)
-                    sample_writer[uid] = sample_idx.cpu().numpy()
-                continue
-
-            insize = next(iter(batch.values())).size(0) + 1
-            if output_dict.get("feat_gen") is not None:
-                # standard text2mel model case
-                feat_gen = output_dict["feat_gen"]
-                logging.info(
-                    "inference speed = {:.1f} frames / sec.".format(
-                        int(feat_gen.size(0)) / (time.perf_counter() - start_time)
-                    )
-                )
-                logging.info(f"{key} (size:{insize}->{feat_gen.size(0)})")
-
-                norm_writer[key] = output_dict["feat_gen"].cpu().numpy()
-                shape_writer.write(
-                    f"{key} " + ",".join(map(str, output_dict["feat_gen"].shape)) + "\n"
-                )
-                if output_dict.get("feat_gen_denorm") is not None:
-                    denorm_writer[key] = output_dict["feat_gen_denorm"].cpu().numpy()
-            else:
-                # end-to-end text2wav model case
-                wav = output_dict["wav"]
-                logging.info(
-                    "inference speed = {:.1f} points / sec.".format(
-                        int(wav.size(0)) / (time.perf_counter() - start_time)
-                    )
-                )
-                logging.info(f"{key} (size:{insize}->{wav.size(0)})")
-
-            if output_dict.get("duration") is not None:
-                # Save duration and fucus rates
-                duration_writer.write(
-                    f"{key} "
-                    + " ".join(map(str, output_dict["duration"].long().cpu().numpy()))
-                    + "\n"
-                )
-
-            if output_dict.get("focus_rate") is not None:
-                focus_rate_writer.write(
-                    f"{key} {float(output_dict['focus_rate']):.5f}\n"
-                )
-
-            if output_dict.get("att_w") is not None:
-                # Plot attention weight
-                att_w = output_dict["att_w"].cpu().numpy()
-
-                if att_w.ndim == 2:
-                    att_w = att_w[None][None]
-                elif att_w.ndim != 4:
-                    raise RuntimeError(f"Must be 2 or 4 dimension: {att_w.ndim}")
-
-                w, h = plt.figaspect(att_w.shape[0] / att_w.shape[1])
-                fig = plt.Figure(
-                    figsize=(
-                        w * 1.3 * min(att_w.shape[0], 2.5),
-                        h * 1.3 * min(att_w.shape[1], 2.5),
-                    )
-                )
-                fig.suptitle(f"{key}")
-                axes = fig.subplots(att_w.shape[0], att_w.shape[1])
-                if len(att_w) == 1:
-                    axes = [[axes]]
-                for ax, att_w in zip(axes, att_w):
-                    for ax_, att_w_ in zip(ax, att_w):
-                        ax_.imshow(att_w_.astype(np.float32), aspect="auto")
-                        ax_.set_xlabel("Input")
-                        ax_.set_ylabel("Output")
-                        ax_.xaxis.set_major_locator(MaxNLocator(integer=True))
-                        ax_.yaxis.set_major_locator(MaxNLocator(integer=True))
-
-                fig.set_tight_layout({"rect": [0, 0.03, 1, 0.95]})
-                fig.savefig(output_dir / f"att_ws/{key}.png")
-                fig.clf()
-
-            if output_dict.get("prob") is not None:
-                # Plot stop token prediction
-                prob = output_dict["prob"].cpu().numpy()
-
-                fig = plt.Figure()
-                ax = fig.add_subplot(1, 1, 1)
-                ax.plot(prob)
-                ax.set_title(f"{key}")
-                ax.set_xlabel("Output")
-                ax.set_ylabel("Stop probability")
-                ax.set_ylim(0, 1)
-                ax.grid(which="both")
-
-                fig.set_tight_layout(True)
-                fig.savefig(output_dir / f"probs/{key}.png")
-                fig.clf()
-            # TODO(kamo): Write scp
-            if output_dict.get("wav") is not None:
-                sf.write(
-                    f"{output_dir}/wav/{key}.wav",
-                    output_dict["wav"].cpu().numpy(),
-                    singingGenerate.fs,
-                    "PCM_16",
-                )
-                wavscp_writer.write(f"{key} {os.path.abspath(output_dir / 'wav' / f'{key}.wav')}\n")
-        
-    # remove files if those are not included in output dict
-    if output_dict.get("feat_gen") is None:
-        shutil.rmtree(output_dir / "norm")
-    if output_dict.get("feat_gen_denorm") is None:
-        shutil.rmtree(output_dir / "denorm")
-    if output_dict.get("att_w") is None:
-        shutil.rmtree(output_dir / "att_ws")
-    if output_dict.get("duration") is None:
-        shutil.rmtree(output_dir / "durations")
-    if output_dict.get("focus_rate") is None:
-        shutil.rmtree(output_dir / "focus_rates")
-    if output_dict.get("prob") is None:
-        shutil.rmtree(output_dir / "probs")
-    if output_dict.get("wav") is None and not prep_rl_data:
-        shutil.rmtree(output_dir / "wav")
+                    wav_writer.write(f"{uid} {os.path.abspath(output_dir / samples_dir_name / 'wav' / f'{uid}.wav')}\n")
 
 
 def get_parser():
@@ -858,18 +627,6 @@ def get_parser():
     )
     group = parser.add_argument_group("rl related")
     parser.add_argument(
-        "--prep_rl_data",
-        type=bool,
-        default=False,
-        help="whether to prepare data for RL",
-    )
-    parser.add_argument(
-        "--sample_data",
-        type=bool,
-        default=False,
-        help="whether to sample idx (for RL)",
-    )
-    parser.add_argument(
         "--samples_num",
         type=int,
         default=1,
@@ -880,6 +637,18 @@ def get_parser():
         type=str,
         default=None,
         help="name of samples directory (for RL)",
+    )
+    parser.add_argument(
+        "--gen_wavs",
+        type=bool,
+        default=False,
+        help="whether to generate wavs.",
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=1,
+        help="temperature for token samples",
     )
  
     return parser

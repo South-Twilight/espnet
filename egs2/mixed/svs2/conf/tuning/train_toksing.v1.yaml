@@ -69,7 +69,7 @@ optim_conf:           # keyword arguments for selected optimizer
 ##########################################################
 #                OTHER TRAINING SETTING                  #
 ##########################################################
-max_epoch: 300
+max_epoch: 250
 num_iters_per_epoch: 1000    # number of iterations per epoch
 grad_clip: 1.0              # gradient clipping norm
 grad_noise: false           # whether to use gradient noise injection

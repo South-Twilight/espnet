@@ -2,7 +2,6 @@
 
 """Script to run the inference of singing-voice-synthesis model."""
 
-import os
 import argparse
 import logging
 import shutil
@@ -117,7 +116,7 @@ class SingingGenerate:
         always_fix_seed: bool = False,
         prefer_normalized_feats: bool = False,
         svs_task: str = "svs",
-        sample_data: bool = False,
+        singomd_infer: bool = False,
     ):
         """Initialize SingingGenerate module."""
 
@@ -149,7 +148,7 @@ class SingingGenerate:
         self.prefer_normalized_feats = prefer_normalized_feats
         self.discrete_token_layers = discrete_token_layers
         self.mix_type = mix_type
-        self.sample_data = sample_data
+        self.singomd_infer = singomd_infer
         if vocoder_checkpoint is not None:
             vocoder = SVSTaskClass.build_vocoder_from_file(
                 vocoder_config, vocoder_checkpoint, model, device
@@ -204,7 +203,6 @@ class SingingGenerate:
         lids: Union[torch.Tensor, np.ndarray, None] = None,
         discrete_token: Optional[torch.Tensor] = None,
         decode_conf: Optional[Dict[str, Any]] = None,
-        **kwargs,
     ):
 
         # check inputs
@@ -217,15 +215,8 @@ class SingingGenerate:
 
         # prepare batch
         if isinstance(text, Dict):
-            # dataset infer: text = dict(label=text["label"], score=text["score"]) 
-            # music score infer: text = dict(text=text["text"], score=text["score"]) 
-            infer_data = dict(score=text["score"])
-            if "label" in text:
-                infer_data["label"] = text["label"]
-            else:
-                infer_data["text"] = text["text"]
             data = self.preprocess_fn(
-                "<dummy>", infer_data
+                "<dummy>", dict(label=text["label"], score=text["score"])
             )
             label = data["label"]
             midi = data["midi"]
@@ -274,59 +265,47 @@ class SingingGenerate:
             cfg.update(decode_conf)
         output_dict = self.model.inference(**batch, **cfg)
 
-        if self.sample_data:
-            # prepare data for RL
-            pass
+        if output_dict.get("att_w") is not None:
+            duration, focus_rate = self.duration_calculator(output_dict["att_w"])
+            output_dict.update(duration=duration, focus_rate=focus_rate)
         else:
-            if output_dict.get("att_w") is not None:
-                duration, focus_rate = self.duration_calculator(output_dict["att_w"])
-                output_dict.update(duration=duration, focus_rate=focus_rate)
+            output_dict.update(duration=None, focus_rate=None)
+
+        # apply vocoder (mel-to-wav)
+        if self.vocoder is not None:
+            if (
+                self.prefer_normalized_feats
+                or output_dict.get("feat_gen_denorm") is None
+            ):
+                input_feat = output_dict["feat_gen"]
             else:
-                output_dict.update(duration=None, focus_rate=None)
-
-            # apply vocoder (mel-to-wav)
-            if self.vocoder is not None:
-                if (
-                    self.prefer_normalized_feats
-                    or output_dict.get("feat_gen_denorm") is None
-                ):
-                    input_feat = output_dict["feat_gen"]
-                else:
-                    input_feat = output_dict["feat_gen_denorm"]
-
-                if kwargs.get("samples", None) is not None:
-                    input_feat = kwargs["samples"].to(self.device)
-
-                logging.info(f"type: {self.mix_type}")
-                logging.info(f"layer: {self.discrete_token_layers}")
-                if self.discrete_token_layers > 1:
-                    # NOTE(Yuxun): vocoder can only accept 'frame' type, [T, L]
-                    if self.mix_type == "frame":
-                        input_feat = input_feat.view(-1, self.discrete_token_layers)
-                    elif self.mix_type == "sequence":
-                        input_feat = input_feat.view(
-                            self.discrete_token_layers, -1
-                        ).transpose(0, 1)
-                    # logging.info(f'svs_infer({input_feat.shape}): {input_feat}')
-
-                    # NOTE(Yuxun): codes below for singomd
-                    # feat_dict = {}
-                    # resolution = [20, 40]
-                    # for i, rs in enumerate(resolution):
-                    #     feat = input_feat[:, i].unsqueeze(1)
-                    #     feat = feat[:: (rs // 20)]
-                    #     feat_dict[rs] = feat
-                    #     logging.info(
-                    #         f'{rs}({feat.shape}): {feat_dict[rs].squeeze(1)}'
-                    #     )
-                    # input_feat = feat_dict
-                if "pitch" in output_dict and output_dict["pitch"] is not None:
-                    assert len(output_dict["pitch"].shape) == 1, "pitch shape must be (T,)."
-                    wav = self.vocoder(input_feat, output_dict["pitch"])
-                else:
-                    # print("VOC",input_feat)
-                    wav = self.vocoder(input_feat)
-                output_dict.update(wav=wav)
+                input_feat = output_dict["feat_gen_denorm"]
+            logging.info(f"type: {self.mix_type}")
+            logging.info(f"layer: {self.discrete_token_layers}")
+            if self.discrete_token_layers > 1:
+                # NOTE(Yuxun): vocoder can only accept 'frame' type, [T, L]
+                if self.mix_type == "frame":
+                    input_feat = input_feat.view(-1, self.discrete_token_layers)
+                elif self.mix_type == "sequence":
+                    input_feat = input_feat.view(
+                        self.discrete_token_layers, -1
+                    ).transpose(0, 1)
+                # NOTE(Yuxun): for SingOMD inference
+                # feat_dict = {}
+                # resolution = [20, 40]
+                # for i, rs in enumerate(resolution):
+                #     feat = input_feat[:, i].unsqueeze(1)
+                #     feat = feat[:: (rs // 20)]
+                #     feat_dict[rs] = feat
+                #     # logging.info(f'{rs}({feat.shape}): {feat_dict[rs].squeeze(1)}')
+                # input_feat = feat_dict
+            if "pitch" in output_dict and output_dict["pitch"] is not None:
+                assert len(output_dict["pitch"].shape) == 1, "pitch shape must be (T,)."
+                wav = self.vocoder(input_feat, output_dict["pitch"])
+            else:
+                # print("VOC",input_feat)
+                wav = self.vocoder(input_feat)
+            output_dict.update(wav=wav)
 
         return output_dict
 
@@ -447,11 +426,7 @@ def inference(
     discrete_token_layers: int = 1,
     mix_type: str = "frame",
     svs_task: Optional[str] = "svs",
-    # rl related
-    prep_rl_data: bool = False,
-    sample_data: bool = False,
-    samples_num: int = 1,
-    samples_dir_name: Optional[str] = "samples",
+    singomd_infer: bool = False,
 ):
     """Perform SVS model decoding."""
     if batch_size > 1:
@@ -485,7 +460,7 @@ def inference(
         dtype=dtype,
         device=device,
         svs_task=svs_task,
-        sample_data=sample_data,
+        singomd_infer=singomd_infer,
     )
 
     # 3. Build data-iterator
@@ -530,22 +505,7 @@ def inference(
         output_dir / "durations/durations", "w"
     ) as duration_writer, open(
         output_dir / "focus_rates/focus_rates", "w"
-    ) as focus_rate_writer, open(
-        output_dir / "wav" / "wav.scp", "w"
-    )as wavscp_writer:
-        # RL data prep substage 1: get sample idx
-        if sample_data:
-            (output_dir / f"{samples_dir_name}_comb").mkdir(parents=True, exist_ok=True)
-            sample_writer = NpyScpWriter(output_dir / f"{samples_dir_name}_comb", output_dir / f"{samples_dir_name}_comb" / "samples_idx.scp")
-            sample_shape_writer = open(output_dir / f"{samples_dir_name}_comb" / "samples_shape", "w")
-
-        # RL data prep substage 2: generate wav with coreresponding sample idx
-        if prep_rl_data and not sample_data:
-            (output_dir / f"{samples_dir_name}").mkdir(parents=True, exist_ok=True)
-            (output_dir / "wav").mkdir(parents=True, exist_ok=True)
-            idx_writer = NpyScpWriter(output_dir / f"{samples_dir_name}", output_dir / f"{samples_dir_name}" / "samples_idx.scp")
-            wav_writer = open(output_dir / "wav" / "wav.scp", "w")
-
+    ) as focus_rate_writer:
         for idx, (keys, batch) in enumerate(loader, 1):
             assert isinstance(batch, dict), type(batch)
             assert all(isinstance(s, str) for s in keys), keys
@@ -559,57 +519,10 @@ def inference(
             logging.info(f"batch: {batch}")
             logging.info(f"keys: {keys}")
 
+            start_time = time.perf_counter()
+            output_dict = singingGenerate(**batch)
+
             key = keys[0]
-
-            # RL data prep substage 2: generate wav with coreresponding sample idx
-            if "samples" in batch:
-                samples = batch["samples"]
-                samples_list = []
-                wav_list = []
-                total_sample = samples.shape[-1]
-                for i in range(total_sample):
-                    samples_idx = samples[:, i]
-                    batch.update(samples=samples_idx)
-                    samples_list.append(samples_idx)
-                    output_dict = singingGenerate(**batch)
-                    wav_list.append(output_dict["wav"])
-                for id_num, (sample_idx, sample_wav) in enumerate(zip(samples_list, wav_list)):
-                    uid = key + "_" + str(id_num)
-                    idx_writer[uid] = sample_idx.cpu().numpy()
-                    sf.write(
-                        output_dir / "wav" / f"{uid}.wav",
-                        sample_wav.cpu().numpy(),
-                        singingGenerate.fs,
-                        "PCM_16",
-                    )
-                    wav_writer.write("{} {}\n".format(uid, os.path.abspath(output_dir / "wav" / f"{uid}.wav")))
-
-                # clear output dict
-                output_dict = {}
-            else:
-                start_time = time.perf_counter()
-                output_dict = singingGenerate(**batch)
-            
-            # RL data prep substage 2: generate wav with coreresponding sample idx
-            if len(output_dict) == 0:
-                continue
-
-            # RL data prep substage 1: get sample idx
-            if output_dict.get("logits") is not None and sample_data:
-                logits = output_dict["logits"][0]
-                f0 = output_dict["pitch"]
-                assert f0.size(0) * discrete_token_layers == logits.size(0), f"Mismatch between logits({logits.shape}) and f0({f0.shape}) in {idx}."
-                token_prob = torch.softmax(logits, dim=-1)
-                # [T, V]
-                token_sampled = torch.multinomial(token_prob, samples_num, replacement=True)
-                # [T, samples]
-                sample_writer[key] = token_sampled.cpu().numpy()
-                sample_shape_writer.write(
-                    f"{key} " + ",".join(map(str, token_sampled.shape)) + "\n"
-                )
-                logging.info(f'write sampled tokens with shape {token_sampled.shape}')
-                continue
-
             insize = next(iter(batch.values())).size(0) + 1
             if output_dict.get("feat_gen") is not None:
                 # standard text2mel model case
@@ -706,8 +619,7 @@ def inference(
                     singingGenerate.fs,
                     "PCM_16",
                 )
-                wavscp_writer.write(f"{key} {os.path.abspath(output_dir / 'wav' / f'{key}.wav')}\n")
-        
+
     # remove files if those are not included in output dict
     if output_dict.get("feat_gen") is None:
         shutil.rmtree(output_dir / "norm")
@@ -721,7 +633,7 @@ def inference(
         shutil.rmtree(output_dir / "focus_rates")
     if output_dict.get("prob") is None:
         shutil.rmtree(output_dir / "probs")
-    if output_dict.get("wav") is None and not prep_rl_data:
+    if output_dict.get("wav") is None:
         shutil.rmtree(output_dir / "wav")
 
 
@@ -855,35 +767,16 @@ def get_parser():
         default="frame",
         help="multi token mix type, 'sequence' or 'frame'.",
     )
-    parser.add_argument(
-        "--prep_rl_data",
-        type=bool,
-        default=False,
-        help="whether to prepare data for RL",
-    )
-    parser.add_argument(
-        "--sample_data",
-        type=bool,
-        default=False,
-        help="whether to sample idx (for RL)",
-    )
-    parser.add_argument(
-        "--samples_num",
-        type=int,
-        default=1,
-        help="number of chosen smaples (for RL)",
-    )
-    parser.add_argument(
-        "--samples_dir_name",
-        type=str,
-        default=None,
-        help="name of samples directory (for RL)",
-    )
     group.add_argument(
         "--svs_task",
         default="svs",
         type=str_or_none,
         help="SVS task name. svs or gan_svs",
+    )
+    group.add_argument(
+        "--singomd_infer",
+        default=False,
+        help="Whether to use singomd tokens",
     )
 
     return parser

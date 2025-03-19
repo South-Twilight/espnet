@@ -101,7 +101,8 @@ class ESPnetDiscreteSVSModel(ESPnetSVSModel):
         lids: Optional[torch.Tensor] = None,
         discrete_token: Optional[torch.Tensor] = None,
         discrete_token_lengths: Optional[torch.Tensor] = None,
-        flag_IsValid=False,
+        flag_IsValid: bool = False,
+        flag_RL: bool = False,
         **kwargs,
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], torch.Tensor]:
         """Caclualte outputs and return the loss tensor.
@@ -279,6 +280,7 @@ class ESPnetDiscreteSVSModel(ESPnetSVSModel):
             feats=feats,
             feats_lengths=feats_lengths,
             flag_IsValid=flag_IsValid,
+            flag_RL=flag_RL,
         )
 
         # label

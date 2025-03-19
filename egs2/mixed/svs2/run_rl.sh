@@ -16,7 +16,7 @@ fmin=80
 fmax=7600
 n_fft=2048
 n_shift=320
-win_length=1200
+win_length=1280
 score_feats_extract=syllable_score_feats   # frame_score_feats | syllable_score_feats
 
 # discrete related
@@ -63,14 +63,15 @@ ngpu=1
 
 # rl related
 prep_rl_data=false
-sample_data=false
+gen_wavs=false
 samples_num=10
+temperature=1.0
 samples_policy="TopBottomK"
 rl_data="dump/rl"
 select_metrics="singmos"
 use_refsvs=false
 
-pretrain_checkpoint="exp/svs_train_toksing.v1_raw_phn_none_zh/valid.loss.best.pth"
+pretrain_checkpoint="exp/svs_train_toksing.v1_raw_phn_none_mix/217epoch.pth"
 vocoder_file="/data7/tyx/ParallelWaveGAN/egs/mixdata/token_voc1/exp/tr_no_dev_opencpop_hifigan_token_16k_nodp_f0.v1/checkpoint-250000steps.pkl"
 
 versa_path="/data7/tyx/versa"
@@ -82,7 +83,7 @@ feats_type="raw_rl"
 
 . utils/parse_options.sh || exit 1;
 
-samples_dir_name="samples_${samples_num}_${samples_policy}"
+samples_dir_name="samples_${samples_num}_${samples_policy}_T${temperature}"
             
 # svs opts
 svs_opts=(
@@ -132,8 +133,8 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     log "Stage 1: Prepare dataset for training"
     
     sub_stage=2
-    sub_stop_stage=5
-    portion_selected=0.02
+    sub_stop_stage=4
+    portion_selected=0.01
 
     if [ ${sub_stage} -le 1 ] && [ ${sub_stop_stage} -ge 1 ]; then
         log "substage 1.1: Sample subsets for RL training with portion ${portion_selected}"
@@ -146,7 +147,8 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
             
             nutt=$(wc -l < "${subset_dir}/wav.scp")
             portion_nutt=$(echo ${nutt} ${portion_selected} | awk '{print(int($1 * $2)+1)}')
-            portion_nutt=$(( portion_nutt >= 500 ? portion_nutt : 500 ))
+            # portion_nutt=$(( portion_nutt >= 500 ? portion_nutt : 500 ))
+            portion_nutt=$(( portion_nutt >= 100 ? portion_nutt : 100))
             
             # select subset list
             utils/subset_scp.pl "${portion_nutt}" "${subset_dir}/wav.scp" > "${output_subset_dir}/wav.scp"
@@ -189,9 +191,23 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
         done
 
         # multi layer
+        # Warning(Yuxun): Please keep token list same as token list in pretrained.
         ./svs2.sh "${svs_opts[@]}" \
             --multi_token "${multi_token}" \
             --stage 4 \
+            --stop_stage 4 \
+            --feats_type "${feats_type}" \
+            --train_set "${rl_train_set}" \
+            --valid_set "${rl_valid_set}" \
+            --test_sets "${rl_test_sets}" \
+            --srctexts "data/${rl_train_set}/text" 
+
+        # # stage 5: generate token list
+        # cp data/token_list/phn_none_zh/tokens.txt data/token_list/phn_none_mix/tokens.txt
+
+        ./svs2.sh "${svs_opts[@]}" \
+            --multi_token "${multi_token}" \
+            --stage 6 \
             --stop_stage 6 \
             --feats_type "${feats_type}" \
             --train_set "${rl_train_set}" \
@@ -201,11 +217,12 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     fi
      
     if [ ${sub_stage} -le 2 ] && [ ${sub_stop_stage} -ge 2 ]; then
-        log "substage 1.2: Sample token idx for train_set and valid_set (rl data preparation stage 1)"
+        log "substage 1.2: Sample token idx and generate wavs (optional) for train_set and valid_set"
         # target directory: exp/**/samples_tmp
         prep_rl_data=true
-        sample_data=true
+        gen_wavs=true
         train_tag=$(echo "${pretrain_checkpoint}" | awk -F'/' '{print $(NF-1)}' | sed 's/^svs_//')
+        inference_model=$(echo "${pretrain_checkpoint}" | awk -F'/' '{print $(NF)}')
 
         ./svs2.sh "${svs_opts[@]}" \
             --kmeans_opts "--stage 1 --stop_stage 3 --batch_bins 4800000" \
@@ -218,35 +235,14 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
             --test_sets "${select_sets}" \
             --srctexts "data/${rl_train_set}/text" \
             --prep_rl_data "${prep_rl_data}" \
-            --sample_data "${sample_data}" \
+            --gen_wavs "${gen_wavs}" \
             --samples_num "${samples_num}" \
+            --temperature "${temperature}" \
             --samples_dir_name "${samples_dir_name}" \
-            --tag "${train_tag}" 
-    fi
-
-    if [ ${sub_stage} -le 3 ] && [ ${sub_stop_stage} -ge 3 ]; then
-        log "substage 1.3: Generate wav for sampled token idx"
-        # target directory: dump/rl/${dset}/raw_samples_pooling
-        prep_rl_data=true
-        sample_data=false
-        train_tag=$(echo "${pretrain_checkpoint}" | awk -F'/' '{print $(NF-1)}' | sed 's/^svs_//')
-
-        ./svs2.sh "${svs_opts[@]}" \
-            --kmeans_opts "--stage 1 --stop_stage 3 --batch_bins 4800000" \
-            --multi_token "${multi_token}" \
-            --stage 8 \
-            --stop_stage 8 \
-            --feats_type "${feats_type}" \
-            --train_set "${rl_train_set}" \
-            --valid_set "${rl_valid_set}" \
-            --test_sets "${select_sets}" \
-            --srctexts "data/${rl_train_set}/text" \
-            --prep_rl_data "${prep_rl_data}" \
-            --sample_data "${sample_data}" \
-            --samples_dir_name "${samples_dir_name}" \
+            --inference_model "${inference_model}" \
             --tag "${train_tag}" 
 
-        for dset in ${select_sets}; do
+       for dset in ${select_sets}; do
             # preprocess wav path
             org_path="data/${dset}/wav.scp"
             tgt_dir_path="${rl_data}/${dset}/raw_samples_pooling/${samples_dir_name}"
@@ -269,8 +265,8 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
         done
     fi
 
-    if [ ${sub_stage} -le 4 ] && [ ${sub_stop_stage} -ge 4 ]; then
-        log "substage 1.4: Annotate data with versa"
+    if [ ${sub_stage} -le 3 ] && [ ${sub_stop_stage} -ge 3 ]; then
+        log "substage 1.3: Annotate data with versa"
         if [ ! -e versa ]; then
             ln -s ${versa_path} versa
         fi
@@ -281,7 +277,7 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
             mkdir -p ${tgt_dir}
             for metric in ${select_metrics}; do
                 echo ${tgt_dir}/eval_${metric}.txt
-                if [ ${metric} == "mcd" ]; then
+                if [[ ${metric} == "mcd" || ${metric} == "f0corr" || ${metric} == "f0rmse" ]]; then
                     cd versa
                     python versa/bin/scorer.py \
                     --score_config egs/separate_metrics/mcd_f0.yaml \
@@ -313,8 +309,8 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
         done
     fi
     
-    if [ ${sub_stage} -le 5 ] && [ ${sub_stop_stage} -ge 5 ]; then
-        log "substage 1.5: build dataset with annotated data"
+    if [ ${sub_stage} -le 4 ] && [ ${sub_stop_stage} -ge 4 ]; then
+        log "substage 1.4: build dataset with annotated data"
 
         for dset in ${select_sets}; do
             # Metrics
@@ -361,7 +357,7 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     else
         rl_train_args+=" --init_param ${pretrain_checkpoint}:svs:svs "
     fi
-    train_tag="$(basename "$rl_config" .yaml)#$(echo "$select_metrics" | tr ' ' '#')"
+    train_tag="$(basename "$rl_config" .yaml)#$(echo "$select_metrics" | tr ' ' '#')_sample${samples_num}"
 
     ./svs2.sh "${svs_opts[@]}" \
             --multi_token "${multi_token}" \
@@ -384,7 +380,7 @@ fi
 if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
     log "Stage 3: infer model with RL"
     
-    train_tag="$(basename "$rl_config" .yaml)#$(echo "$select_metrics" | tr ' ' '#')"
+    train_tag="$(basename "$rl_config" .yaml)#$(echo "$select_metrics" | tr ' ' '#')_sample${samples_num}"
 
     ./svs2.sh "${svs_opts[@]}" \
             --multi_token "${multi_token}" \
@@ -405,7 +401,7 @@ fi
 if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
     log "Stage 4: score generated wavs"
     
-    train_tag="$(basename "$rl_config" .yaml)#$(echo "$select_metrics" | tr ' ' '#')"
+    train_tag="$(basename "$rl_config" .yaml)#$(echo "$select_metrics" | tr ' ' '#')_sample${samples_num}"
 
     ./svs2.sh "${svs_opts[@]}" \
             --multi_token "${multi_token}" \

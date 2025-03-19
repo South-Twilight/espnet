@@ -55,34 +55,34 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
         echo "Please check whether you need to delete data."
         echo "If not, please skip this stage."
         # rm -r "data"
-        exit
-    fi
-    for x in ${train_dev} ${test_set} ${train_set}; do
-        echo "process for subset: ${x}"
-        opts="data/${x}"
-        # mv data to data/rawdata
-        for dir in "${datasets_path[@]}"; do
-            if [[ -d "${dir}" ]] ; then
-                org_workspace=$(realpath ${dir}/../../..)
-                dataset=$(basename ${org_workspace})
-                echo $dir
-                utils/copy_data_dir.sh ${dir}/${x} data/raw_data/"${dataset}_${x}"
-                python local/convert_r2a_path.py ${org_workspace}/svs2 data/raw_data/"${dataset}_${x}"/wav.scp \
-                    data/raw_data/"${dataset}_${x}"/wav.scp.tmp
-                python local/convert_r2a_path.py ${org_workspace}/svs2 data/raw_data/"${dataset}_${x}"/score.scp \
-                    data/raw_data/"${dataset}_${x}"/score.scp.tmp
-                sort -o data/raw_data/"${dataset}_${x}"/wav.scp.tmp data/raw_data/"${dataset}_${x}"/wav.scp.tmp
-                sort -o data/raw_data/"${dataset}_${x}"/score.scp.tmp data/raw_data/"${dataset}_${x}"/score.scp.tmp
-                mv data/raw_data/"${dataset}_${x}"/wav.scp.tmp data/raw_data/"${dataset}_${x}"/wav.scp
-                mv data/raw_data/"${dataset}_${x}"/score.scp.tmp data/raw_data/"${dataset}_${x}"/score.scp
-                opts+=" data/raw_data/${dataset}_${x}"
-            else
-                echo "Dataset dicretory ${dir} does not exist."
-                exit 1
-            fi
+    else
+        for x in ${train_dev} ${test_set} ${train_set}; do
+            echo "process for subset: ${x}"
+            opts="data/${x}"
+            # mv data to data/rawdata
+            for dir in "${datasets_path[@]}"; do
+                if [[ -d "${dir}" ]] ; then
+                    org_workspace=$(realpath ${dir}/../../..)
+                    dataset=$(basename ${org_workspace})
+                    echo $dir
+                    utils/copy_data_dir.sh ${dir}/${x} data/raw_data/"${dataset}_${x}"
+                    python local/convert_r2a_path.py ${org_workspace}/svs2 data/raw_data/"${dataset}_${x}"/wav.scp \
+                        data/raw_data/"${dataset}_${x}"/wav.scp.tmp
+                    python local/convert_r2a_path.py ${org_workspace}/svs2 data/raw_data/"${dataset}_${x}"/score.scp \
+                        data/raw_data/"${dataset}_${x}"/score.scp.tmp
+                    sort -o data/raw_data/"${dataset}_${x}"/wav.scp.tmp data/raw_data/"${dataset}_${x}"/wav.scp.tmp
+                    sort -o data/raw_data/"${dataset}_${x}"/score.scp.tmp data/raw_data/"${dataset}_${x}"/score.scp.tmp
+                    mv data/raw_data/"${dataset}_${x}"/wav.scp.tmp data/raw_data/"${dataset}_${x}"/wav.scp
+                    mv data/raw_data/"${dataset}_${x}"/score.scp.tmp data/raw_data/"${dataset}_${x}"/score.scp
+                    opts+=" data/raw_data/${dataset}_${x}"
+                else
+                    echo "Dataset dicretory ${dir} does not exist."
+                    exit 1
+                fi
+            done
+            utils/combine_data.sh --extra-files "score.scp label utt2spk" ${opts}
         done
-        utils/combine_data.sh --extra-files "score.scp label utt2spk" ${opts}
-    done
+    fi
 fi
 
 if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then

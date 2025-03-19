@@ -104,6 +104,17 @@ class ESPnetDiscreteRLSVSModel(ESPnetSVSModel):
         if algo in ["simpo"]:
             assert self.length_norm, f"Algo {algo} requires length_normalize"
 
+        if self.training:
+            fixed_modules_set = set(self.fixed_modules)
+            for name, module in self.svs.named_modules():
+                if any(name.startswith(fix_module_name + ".") or name == fix_module_name for fix_module_name in fixed_modules_set):
+                    for param in module.parameters():
+                        if param.requires_grad:
+                            param.requires_grad_(False)
+            if self.ref_svs is not None:
+                self.ref_svs.requires_grad_(False)
+
+
     def forward(
         self,
         text: torch.Tensor,
@@ -417,25 +428,26 @@ class ESPnetDiscreteRLSVSModel(ESPnetSVSModel):
         all_length = torch.cat([pos_length, neg_length]) # [B_pos + B_neg]
         assert n_neg % n_pos == 0, (n_neg, n_pos)
 
-        for fix_module_name in self.fixed_modules:
-            for name, module in self.svs.named_modules():
-                if name.startswith(fix_module_name + ".") or name == fix_module_name: 
-                    module.eval()
-                    for param in module.parameters():
-                        param.requires_grad = False
-            if self.ref_svs is not None:
-                for name, module in self.ref_svs.named_modules():
-                    if name.startswith(fix_module_name + ".") or name == fix_module_name: 
-                        module.eval()
+        fixed_modules_set = set(self.fixed_modules)
+        for name, module in self.svs.named_modules():
+            if any(name.startswith(fix_module_name + ".") or name == fix_module_name for fix_module_name in fixed_modules_set):
+                module.eval()
+        if self.ref_svs is not None:
+            for name, module in self.ref_svs.named_modules():
+                if any(name.startswith(fix_module_name + ".") or name == fix_module_name for fix_module_name in fixed_modules_set):
+                   module.eval()
 
-        _, stats, weight, policy_logits = self.svs(**batch)
+        # logging.info('###### svs #####')
+        _, stats, weight, policy_dict = self.svs(**batch, pos_idx=pos_idx, pos_length=pos_length)
+        policy_logits = policy_dict["feat_gen"]
         stats["svs_loss"] = stats.pop("loss")
 
+        ref_logits = None
         if self.ref_svs is not None:
+            # logging.info('###### ref_svs #####')
             with torch.no_grad():
-                _, _, _, ref_logits = self.ref_svs(**batch)
-        else:
-            ref_logits = None
+                _, _, _, ref_dict = self.ref_svs(**batch, pos_idx=pos_idx, pos_length=pos_length)
+                ref_logits = ref_dict["feat_gen"]
 
         if len(policy_logits.size()) == 3:
             policy_logits = policy_logits.unsqueeze(2) # [B, T, V] -> [B, T, nq, V]

@@ -12,10 +12,10 @@
 # --espnet_cer_insert: insertion errors
 # --espnet_cer_replace: replacement errors
 # --espnet_cer_equal: correct matching words/character counts
-- name: espnet_wer
-  model_tag: default
-  beam_size: 5
-  text_cleaner: whisper_basic
+# - name: espnet_wer
+#   model_tag: default
+#   beam_size: 5
+#   text_cleaner: whisper_basic
 
 # mcd f0 related metrics
 #  -- mcd: mel cepstral distortion
@@ -30,7 +30,7 @@
   mcep_alpha: 0.466
   seq_mismatch_tolerance: 0.1
   power_threshold: -20
-  dtw: false
+  dtw: true
 
 # pseudo subjective metrics
 # -- utmos: UT-MOS score
@@ -38,14 +38,15 @@
 # -- plcmos: PLC-MOS score
 # -- aecmos: AEC-MOS score
 - name: pseudo_mos
-  predictor_types: ["utmos", "dnsmos", "plcmos", "singmos"]
+  # predictor_types: ["utmos", "dnsmos", "plcmos", "singmos"]
+  predictor_types: ["utmos",  "singmos"]
   predictor_args:
     utmos:
       fs: 16000
-    dnsmos:
-      fs: 16000
-    plcmos:
-      fs: 16000
+    # dnsmos:
+    #   fs: 16000
+    # plcmos:
+    #   fs: 16000
     singmos:
       fs: 16000
 
