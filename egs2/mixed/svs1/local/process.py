@@ -186,6 +186,7 @@ def convert(
 
         if lyric in sli:  # silence case
             new_labels.append([labels[index][0], labels[index][1], lyric])
+            index += 1
             continue
         elif lyric in ["-", "—"]:  # slur case
             phn = new_labels[-1][2]
