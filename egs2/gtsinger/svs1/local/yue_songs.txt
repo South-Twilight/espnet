@@ -16,3 +16,5 @@ Chinese/ZH-Tenor-1/Vibrato/我真的受伤了/Vibrato_Group/0008
 Chinese/ZH-Alto-1/Vibrato/我真的受伤了/Vibrato_Group/0000
 Chinese/ZH-Alto-1/Vibrato/我真的受伤了/Vibrato_Group/0002
 Chinese/ZH-Alto-1/Vibrato/我真的受伤了/Vibrato_Group/0010
+Chinese/ZH-Tenor-1/Vibrato/我真的受伤了/Vibrato_Group/0013
+Chinese/ZH-Tenor-1/Vibrato/我真的受伤了/Control_Group/0013

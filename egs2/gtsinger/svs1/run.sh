@@ -28,6 +28,7 @@ opts="--audio_format wav "
 
 train_set=tr_no_dev
 valid_set=dev
+<<<<<<< HEAD
 #test_sets="dev test"
 test_sets="dev eval"
 
@@ -37,6 +38,16 @@ inference_config=conf/decode.yaml
 
 # text related processing arguments
 g2p=None #pypinyin_g2p_phone_without_prosody
+=======
+test_sets="dev eval"
+
+# training and inference configuration
+train_config=conf/tuning/train_visinger2_24k.yaml
+inference_config=conf/decode.yaml
+
+# text related processing arguments
+g2p=None
+>>>>>>> espnet-muskits
 cleaner=none
 
 ./svs.sh \

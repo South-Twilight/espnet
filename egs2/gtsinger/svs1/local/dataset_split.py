@@ -1,12 +1,10 @@
 import argparse
 import ast
 import json
-import math
 import os
 import shutil
 
 import textgrid
-import xmltodict
 from pypinyin import Style, pinyin
 from pypinyin.style._utils import get_finals, get_initials
 
@@ -14,18 +12,26 @@ from espnet2.fileio.score_scp import SingingScoreWriter, XMLReader
 
 UTT_PREFIX = "GTSINGER_CHINESE"
 DEV_LIST = [
-    "不再见",
-    "曹操",
-    "爱情转移",
-    "大鱼",
-    "安河桥",
+    "传奇",
+    "遇见",
+    "亲爱的那不是爱情",
+    "南山南",
+    "老男孩",
+    "全世界谁倾听你",
+    "知足",
+    "红玫瑰",
+    "终于等到你",
 ]
 TEST_LIST = [
-    "匆匆那年",
-    "可惜没如果",
-    "菊花台",
-    "默",
-    "画心",
+    "修炼爱情",
+    "走马",
+    "崇拜",
+    "江南",
+    "奇妙能力歌",
+    "岁月神偷",
+    "热雪",
+    "说谎",
+    "大鱼",
 ]
 
 
@@ -34,14 +40,14 @@ unique_label_dict = {}
 
 
 def pre_unique_data(yue_songs_file, unique_label_file):
-    with open(yue_songs_file, "r", encoding="utf-8") as file:
-        for line in file:
+    with open(yue_songs_file, "r", encoding="utf-8") as file1:
+        for line in file1:
             yue_song_list.append(line.strip())
 
-    with open(unique_label_file, "r", encoding="utf-8") as file:
+    with open(unique_label_file, "r", encoding="utf-8") as file2:
         index = 0
         key = ""
-        for line in file:
+        for line in file2:
             if len(line) < 2:
                 break
             if index % 3 == 0:
@@ -154,9 +160,6 @@ def process_score_info(notes, label_pho_info, utt_id):
     phnes = []
     labelind = 0
     for i in range(len(notes)):
-        # Divide songs by 'P' (pause) or 'B' (breath) or GlottalStop
-        # fix errors in dataset
-        # remove rest note
         if notes[i].lyric == "—":
             score_notes[-1][1] = notes[i].et
         if notes[i].lyric == "P":
@@ -167,7 +170,6 @@ def process_score_info(notes, label_pho_info, utt_id):
                 phonemes = ["ve"]
             for j in range(len(phonemes)):
                 if labelind >= len(label_pho_info):  # error
-                    print("error.....mismatch(label and score) in ", utt_id)
                     exit(1)
                 phonemes[j] = label_pho_info[labelind]
                 labelind += 1
@@ -197,23 +199,15 @@ def process_json_to_pho_score(basepath, tempo, notes):
     score_notes, phnes = process_score_info(notes, pho_info, utt_id)
 
     if len(pho_info) != len(phnes):  # error
-        print("erro....mismatch(label and score) in ", utt_id)
         exit(1)
     else:  # check score and label
-        sign = True
         f = False
         for i in range(len(pho_info)):
             assert pho_info[i] == phnes[i]
             if pho_info[i] != phnes[i]:
                 f = True
-                if sign:
-                    sign = False
-                print(
-                    "mismatch in {} [{}]: {} != {}".format(
-                        utt_id, i, pho_info[i], phnes[i]
-                    )
-                )
-        if f is True:
+
+        if f is True:  # error
             exit(1)
 
     return (
@@ -228,60 +222,43 @@ def process_json_to_pho_score(basepath, tempo, notes):
 
 
 def process_subset(src_data, subset, check_func, fs, wav_dump, score_dump):
-    singerfolder = os.listdir(src_data)
     makedir(subset)
     wavscp = open(os.path.join(subset, "wav.scp"), "w", encoding="utf-8")
     utt2spk = open(os.path.join(subset, "utt2spk"), "w", encoding="utf-8")
     label_scp = open(os.path.join(subset, "label"), "w", encoding="utf-8")
     musicxml = open(os.path.join(subset, "score.scp"), "w", encoding="utf-8")
 
-    for sifolder in singerfolder:
-        skillfolder = os.listdir(os.path.join(src_data, sifolder))
-
-        for skfolder in skillfolder:
-            songfolder = os.listdir(os.path.join(src_data, sifolder, skfolder))
-
-            for sofolder in songfolder:
-                if not check_func(sofolder):
+    for root, dirs, files in os.walk(src_data):
+        if not dirs:
+            for file in files:
+                filepath = os.path.join(root, file)
+                plist = filepath.strip("/").split("/")
+                index = plist.index("GTSinger")
+                if (
+                    len(plist) != 10
+                    or plist[index + 5] == "Paired_Speech_Group"
+                    or plist[index + 6][5] != "w"
+                    or check_func(plist[index + 4])
+                ):
                     continue
-                for i in range(12):
-                    for group in [skfolder, "Control"]:
-                        key = "{}{}_{}_{}_{}_{}".format(
-                            sifolder.split("-")[1],
-                            sifolder.split("-")[2],
-                            skfolder,
-                            sofolder,
-                            group + "Group",
-                            str(i).zfill(4),
-                        )
-                        path = os.path.join(
-                            src_data,
-                            sifolder,
-                            skfolder,
-                            sofolder,
-                            group + "_Group",
-                            str(i).zfill(4),
-                        )
-                        if not os.path.exists(path + ".wav"):
-                            continue
-                        utt_id = "{}_{}".format(UTT_PREFIX, key)
 
-                        cmd = "sox {}.wav -c 1 -t wavpcm -b 16 -r {} {}.wav".format(
-                            path, fs, os.path.join(wav_dump, utt_id)
-                        )
-                        os.system(cmd)
+                utt_id = "_".join(plist[index:])[:-4]
+                cmd = 'sox "{}" -c 1 -t wavpcm -b 16 -r {} "{}.wav"'.format(
+                    filepath, fs, os.path.join(wav_dump, utt_id)
+                )
+                os.system(cmd)
 
-                        wavscp.write(
-                            "{} {}\n".format(
-                                utt_id, os.path.join(wav_dump, "{}.wav".format(utt_id))
-                            )
-                        )
-                        utt2spk.write(
-                            "{} {}\n".format(
-                                utt_id, sifolder.split("-")[1] + sifolder.split("-")[2]
-                            )
-                        )
-                        musicxml.write("{} {}\n".format(utt_id, path + ".musicxml"))
+                wavscp.write(
+                    "{} {}\n".format(
+                        utt_id, os.path.join(wav_dump, "{}.wav".format(utt_id))
+                    )
+                )
+                utt2spk.write("{} {}\n".format(utt_id, plist[index + 2]))
+                musicxml.write(
+                    "{} {}\n".format(
+                        utt_id, os.path.splitext(filepath)[0] + ".musicxml"
+                    )
+                )
 
     reader = XMLReader(os.path.join(subset, "score.scp"))
     scorescp = open(os.path.join(subset, "score.scp"), "r", encoding="utf-8")
@@ -317,7 +294,7 @@ if __name__ == "__main__":
         "--yue_songs_file",
         type=str,
         default="./local/yue_songs.txt",
-        help="song list file that '月' is pronounced 'yue'",
+        help="song list file that '乐' is pronounced 'yue'",
     )
     parser.add_argument(
         "--unique_label_file",
@@ -332,7 +309,6 @@ if __name__ == "__main__":
         os.makedirs(args.wav_dump)
 
     pre_unique_data(args.yue_songs_file, args.unique_label_file)
-
     process_subset(
         args.src_data, args.train, train_check, args.fs, args.wav_dump, args.score_dump
     )
